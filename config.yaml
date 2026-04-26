@@ -1,0 +1,33 @@
+server:
+  host: "127.0.0.1"
+  port: 8080
+
+privacy:
+  enabled: true
+  backend: "regex"
+  entities:
+    - EMAIL_ADDRESS
+    - IP_ADDRESS
+    - CIDR
+    - DOMAIN
+    - API_KEY
+    - SECRET
+    - AWS_ARN
+    - PORT
+  whitelist:
+    - "example.com"
+    - "github.com"
+    - "api.openai.com"
+    - "api.anthropic.com"
+
+providers:
+  - alias: "fast"
+    model: "claude-haiku-4-5-20251001"
+  - alias: "smart"
+    model: "claude-sonnet-4-6"
+  - alias: "local"
+    model: "ollama/llama3"
+
+router:
+  default_alias: "fast"
+  fallback_chain: ["fast", "smart"]
