@@ -16,6 +16,12 @@ _ROLES_TO_OBFUSCATE = frozenset({"user", "tool"})
 log = logging.getLogger(__name__)
 
 
+def _fmt_user_messages(messages: list[dict]) -> str:
+    """Format only user/tool messages for debug logging — skips system, assistant, tool defs."""
+    filtered = [m for m in messages if m.get("role") in _ROLES_TO_OBFUSCATE]
+    return json.dumps(filtered, indent=2)
+
+
 class Pipeline:
     """
     Wires the privacy engine, provider router, and deobfuscator together.
@@ -45,7 +51,7 @@ class Pipeline:
         model = body.get("model")
 
         scrubbed = await self._engine.obfuscate(messages, session_id)
-        log.debug("[upstream-req] session=%s\n%s", session_id, json.dumps(scrubbed, indent=2))
+        log.debug("[upstream-req] session=%s\n%s", session_id, _fmt_user_messages(scrubbed))
         response = await self._router.call(scrubbed, model=model, stream=False)
 
         content = response.choices[0].message.content or ""
@@ -62,7 +68,7 @@ class Pipeline:
         model = body.get("model")
 
         scrubbed = await self._engine.obfuscate(messages, session_id)
-        log.debug("[upstream-req] session=%s\n%s", session_id, json.dumps(scrubbed, indent=2))
+        log.debug("[upstream-req] session=%s\n%s", session_id, _fmt_user_messages(scrubbed))
         stream = await self._router.call(scrubbed, model=model, stream=True)
 
         session = StreamingDeobfuscatorSession(self._engine, session_id)
@@ -174,7 +180,7 @@ class Pipeline:
             body.get("messages", []), session_id
         )
         scrubbed_body = {**body, "messages": messages}
-        log.debug("[upstream-req] session=%s\n%s", session_id, json.dumps(scrubbed_body, indent=2))
+        log.debug("[upstream-req] session=%s\n%s", session_id, _fmt_user_messages(messages))
 
         try:
             async with httpx.AsyncClient(timeout=120.0) as client:
@@ -214,7 +220,7 @@ class Pipeline:
             body.get("messages", []), session_id
         )
         scrubbed_body = {**body, "messages": messages}
-        log.debug("[upstream-req] session=%s\n%s", session_id, json.dumps(scrubbed_body, indent=2))
+        log.debug("[upstream-req] session=%s\n%s", session_id, _fmt_user_messages(messages))
 
         deob_session = StreamingDeobfuscatorSession(self._engine, session_id)
         accumulated: list[str] = []
