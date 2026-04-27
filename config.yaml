@@ -8,8 +8,8 @@ privacy:
     - type: "regex"
     # Uncomment to enable NER (names, addresses, phone numbers, credit cards).
     # Requires: uv pip install "presidio-analyzer>=2.2.0" && python -m spacy download en_core_web_sm
-    #- type: "presidio"
-    #  model: "en_core_web_sm"
+    - type: "presidio"
+      model: "en_core_web_trf"
   entities:
     # Structured PII — handled by regex
     - EMAIL_ADDRESS
@@ -21,9 +21,9 @@ privacy:
     - AWS_ARN
     # PORT intentionally omitted — port numbers identify services, not people or secrets
     # Unstructured NER — handled by presidio (uncomment when presidio backend is enabled)
-    #- PERSON
-    #- PHONE_NUMBER
-    #- CREDIT_CARD
+    - PERSON
+    - PHONE_NUMBER
+    - CREDIT_CARD
     #- LOCATION
   whitelist:
     loopback:
@@ -34,6 +34,8 @@ privacy:
     ip_ranges: []
       # RFC 1918 private ranges are hardcoded safe — add extra ranges here if needed
     domains:
+      # Internal
+      - "settings.local"
       # LLM APIs
       - "api.anthropic.com"
       - "api.openai.com"

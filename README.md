@@ -54,7 +54,7 @@ privacy:
   backends:
     - type: "regex"           # Always on — structured PII
     # - type: "presidio"      # Optional — NER (names, phones, credit cards)
-    #   model: "en_core_web_sm"
+    #   model: "en_core_web_trf"   # transformer model; recommended
   entities:
     - EMAIL_ADDRESS
     - IP_ADDRESS
@@ -63,22 +63,19 @@ privacy:
     - API_KEY
     - SECRET
     - AWS_ARN
-    - PORT
+    # PORT intentionally omitted — port numbers identify services, not secrets
     # NER entities (presidio only — uncomment when presidio backend is enabled)
     # - PERSON
     # - PHONE_NUMBER
     # - CREDIT_CARD
-    # - LOCATION
   whitelist:
     loopback:           # Exact strings never obfuscated
       - "localhost"
       - "127.0.0.1"
       - "::1"
       - "0.0.0.0"
-    ip_ranges:          # CIDR ranges — IPs/CIDRs inside are skipped
-      - "10.0.0.0/8"
-      - "172.16.0.0/12"
-      - "192.168.0.0/16"
+    ip_ranges: []       # RFC 1918 (10/8, 172.16/12, 192.168/16) are hardcoded safe
+                        # Add extra non-sensitive CIDR ranges here if needed
     domains:            # Exact domain names never obfuscated
       - "api.anthropic.com"
       - "github.com"
@@ -92,27 +89,38 @@ Presidio uses spaCy for named entity recognition. Install separately:
 
 ```bash
 uv pip install "presidio-analyzer>=2.2.0"
-python -m spacy download en_core_web_sm
+
+# Transformer model — recommended; far fewer false positives on code/markdown text
+uv pip install "spacy[transformers]"
+uv pip install "numpy<2"        # required: spacy[transformers] installs torch 2.2.2 which
+                                # was compiled against NumPy 1.x; NumPy 2.x breaks it
+python -m spacy download en_core_web_trf
+
+# Lightweight fallback (more false positives but no extra dependencies):
+# python -m spacy download en_core_web_sm
 ```
 
-Then uncomment the `presidio` backend and NER entities in `config.yaml`.
+> **Note:** `spacy[transformers]` pins `torch<2.3`. This is a spacy-transformers upstream
+> constraint — you cannot upgrade torch while keeping this model.
+
+Then set `model: "en_core_web_trf"` in `config.yaml` and uncomment the `presidio` backend and NER entities.
 
 ## Entity Types Detected
 
 | Type | Backend | Examples | Safe List |
 |---|---|---|---|
 | `EMAIL_ADDRESS` | regex | `dev@corp.internal` | Configurable whitelist |
-| `IP_ADDRESS` | regex | `10.0.0.1` | Loopback, RFC-DOC ranges, configured ip_ranges |
-| `CIDR` | regex | `10.0.0.0/8` | RFC-DOC ranges, configured ip_ranges |
+| `IP_ADDRESS` | regex | `8.8.8.8` | Loopback, RFC 1918, RFC-DOC ranges, configured ip_ranges |
+| `CIDR` | regex | `203.0.113.0/24` | RFC 1918, RFC-DOC ranges, configured ip_ranges |
 | `DOMAIN` | regex | `db.corp.internal` | Configurable domains list |
 | `API_KEY` | regex | `sk-abc123...`, `Bearer ABC...` | — |
 | `SECRET` | regex | DSN URLs, env-var assignments, PEM keys | — |
 | `AWS_ARN` | regex | `arn:aws:iam::123456789012:role/DevRole` | — |
-| `PORT` | regex | `:8080` | Ports > 65535 |
 | `PERSON` | presidio | `John Smith` | — |
 | `PHONE_NUMBER` | presidio | `+1-555-867-5309` | — |
 | `CREDIT_CARD` | presidio | `4111 1111 1111 1111` | — |
-| `LOCATION` | presidio | `San Francisco, CA` | — |
+
+**Not enabled by default:** PORT (`:8080` — identifies services, not secrets), LOCATION (high false-positive rate)
 
 **Not detected (not sensitive):** UUID, DOCKER_IMAGE, K8S_RESOURCE
 

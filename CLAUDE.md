@@ -67,7 +67,7 @@ privacy:
   backends:
     - type: "regex"
     - type: "presidio"
-      model: "en_core_web_sm"   # optional, default shown
+      model: "en_core_web_trf"   # transformer model; recommended for DevOps text
   entities:
     - EMAIL_ADDRESS
     - IP_ADDRESS
@@ -76,18 +76,29 @@ privacy:
     - API_KEY
     - SECRET
     - AWS_ARN
-    - PORT
     - PERSON
     - PHONE_NUMBER
     - CREDIT_CARD
-    - LOCATION
 ```
 
 **Install Presidio (optional):**
 ```bash
 uv pip install "presidio-analyzer>=2.2.0"
-python -m spacy download en_core_web_sm
+# Transformer model (recommended — far fewer false positives on technical/markdown text):
+uv pip install "spacy[transformers]"   # pins torch<2.3; requires numpy<2 (see below)
+uv pip install "numpy<2"               # spacy[transformers] pulls torch 2.2.2 which was
+                                       # compiled against NumPy 1.x C API; NumPy 2.x breaks it
+python -m spacy download en_core_web_trf
+
+# Lightweight alternative (more false positives on code/markdown):
+# python -m spacy download en_core_web_sm
 ```
+
+> **Dependency note:** `spacy[transformers]` pins `torch<2.3` (currently installs torch 2.2.2).
+> That torch version was compiled against the NumPy 1.x C API. If NumPy 2.x is present in the
+> environment, torch crashes at import time with `_ARRAY_API not found`. Pinning `numpy<2` is the
+> correct fix. You cannot upgrade torch past 2.2.x without upgrading spacy-transformers first,
+> which is a separate upstream dependency issue.
 
 ### Whitelist
 
@@ -100,16 +111,18 @@ whitelist:
     - "127.0.0.1"
     - "::1"
     - "0.0.0.0"
-  ip_ranges:        # CIDR ranges — IPs/CIDRs falling inside are skipped
-    - "10.0.0.0/8"
-    - "172.16.0.0/12"
-    - "192.168.0.0/16"
+  ip_ranges: []     # Extra CIDR ranges — IPs/CIDRs falling inside are skipped
+                    # RFC 1918 private ranges are hardcoded safe (see below)
   domains:          # Exact-match domain names
     - "api.anthropic.com"
     - "github.com"
 ```
 
-Hardcoded universal safe list (always applied, regardless of config): RFC documentation ranges `192.0.2.*`, `198.51.100.*`, `203.0.113.*`.
+**Hardcoded safe ranges (always applied, regardless of config):**
+- RFC 1918 private networks: `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`
+- RFC documentation ranges: `192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`
+
+These are never obfuscated because internal/private IPs identify infrastructure topology, not secrets. Use `ip_ranges` in config for any additional non-sensitive ranges beyond RFC 1918.
 
 ### Provider and Model Routing
 
@@ -441,6 +454,6 @@ export ANTHROPIC_API_KEY=sk-ant-...
 export OPENAI_API_KEY=sk-...
 export GROQ_API_KEY=gsk-...
 
-# Proxy log verbosity: INFO (default) | DEBUG | TRACE
+# Proxy log verbosity: INFO (default) | DEBUG
 export OBFUSPROXY_LOG_LEVEL=DEBUG
 ```

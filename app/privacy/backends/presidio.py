@@ -1,4 +1,19 @@
+import re
+
 from .base import Detector, Entity, resolve_overlaps
+
+# PERSON spans must look like an actual name: two or more words, only letters /
+# hyphens / apostrophes, no digits or symbols.  This cuts single-word technical
+# terms ("Bug", "Lint", "HTTPS") and code fragments ("cubic-bezier(0.16") while
+# keeping "Sarah Chen", "Marcus Webb", "Mary-Jane Watson".
+# NOTE: Title-Case two-word headings ("Git Workflow") are indistinguishable from
+# names at the token level with en_core_web_sm — that's a model limitation.
+_PERSON_RE = re.compile(r"^[A-Za-z][a-zA-Z'\-]*(?:\s[A-Za-z][a-zA-Z'\-]*)+$")
+
+
+def _is_plausible_person(text: str) -> bool:
+    t = text.strip()
+    return 5 <= len(t) <= 40 and bool(_PERSON_RE.match(t))
 
 
 class PresidioDetector(Detector):
@@ -39,9 +54,13 @@ class PresidioDetector(Detector):
             language="en",
             allow_list=list(self._whitelist),
         )
-        entities = [
-            Entity(type=r.entity_type, start=r.start, end=r.end, text=text[r.start:r.end])
-            for r in results
-        ]
+        entities = []
+        for r in results:
+            span_text = text[r.start:r.end]
+            if r.entity_type == "PERSON" and not _is_plausible_person(span_text):
+                continue
+            entities.append(
+                Entity(type=r.entity_type, start=r.start, end=r.end, text=span_text)
+            )
         entities.sort(key=lambda e: e.start)
         return resolve_overlaps(entities)
