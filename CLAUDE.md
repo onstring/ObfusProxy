@@ -125,18 +125,14 @@ Control verbosity with `OBFUSPROXY_LOG_LEVEL` (default: `INFO`):
 | Level | Shows |
 |---|---|
 | `INFO` | Entity count per obfuscated text block |
-| `DEBUG` | Entity type, original value, assigned placeholder, message role/index |
-| `TRACE` | Full scrubbed request body sent to LLM + raw response received |
+| `DEBUG` | Entity type, original value, placeholder, message role/index — plus the full obfuscated prompt sent to the LLM and the raw response received before de-obfuscation |
 
 ```bash
 # Counts only (default)
 uvicorn app.main:app --host 127.0.0.1 --port 8080 --workers 1
 
-# Entity details
+# Entity details + full payload visibility
 OBFUSPROXY_LOG_LEVEL=DEBUG uvicorn app.main:app --host 127.0.0.1 --port 8080 --workers 1
-
-# Full prompts and responses
-OBFUSPROXY_LOG_LEVEL=TRACE uvicorn app.main:app --host 127.0.0.1 --port 8080 --workers 1
 ```
 
 Sample DEBUG output:

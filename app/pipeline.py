@@ -8,7 +8,6 @@ import httpx
 from fastapi import Request
 
 from app.deobfuscator import ResponseDeobfuscator, StreamingDeobfuscatorSession
-from app.log import TRACE
 from app.privacy.engine import PrivacyEngine
 from app.router import ProviderRouter
 
@@ -46,11 +45,11 @@ class Pipeline:
         model = body.get("model")
 
         scrubbed = await self._engine.obfuscate(messages, session_id)
-        log.log(TRACE, "[upstream-req] session=%s\n%s", session_id, json.dumps(scrubbed, indent=2))
+        log.debug("[upstream-req] session=%s\n%s", session_id, json.dumps(scrubbed, indent=2))
         response = await self._router.call(scrubbed, model=model, stream=False)
 
         content = response.choices[0].message.content or ""
-        log.log(TRACE, "[upstream-res] session=%s\n%s", session_id, content)
+        log.debug("[upstream-res] session=%s\n%s", session_id, content)
         restored = await self._deob.restore(content, session_id)
 
         response.choices[0].message.content = restored
@@ -63,7 +62,7 @@ class Pipeline:
         model = body.get("model")
 
         scrubbed = await self._engine.obfuscate(messages, session_id)
-        log.log(TRACE, "[upstream-req] session=%s\n%s", session_id, json.dumps(scrubbed, indent=2))
+        log.debug("[upstream-req] session=%s\n%s", session_id, json.dumps(scrubbed, indent=2))
         stream = await self._router.call(scrubbed, model=model, stream=True)
 
         session = StreamingDeobfuscatorSession(self._engine, session_id)
@@ -84,7 +83,7 @@ class Pipeline:
             chunk.choices[0].delta.content = final
             yield f"data: {json.dumps(chunk.model_dump())}\n\n"
 
-        log.log(TRACE, "[upstream-res] session=%s\n%s", session_id, "".join(accumulated))
+        log.debug("[upstream-res] session=%s\n%s", session_id, "".join(accumulated))
         yield "data: [DONE]\n\n"
 
     async def run_legacy_non_streaming(self, request: Request, body: dict) -> dict:
@@ -175,7 +174,7 @@ class Pipeline:
             body.get("messages", []), session_id
         )
         scrubbed_body = {**body, "messages": messages}
-        log.log(TRACE, "[upstream-req] session=%s\n%s", session_id, json.dumps(scrubbed_body, indent=2))
+        log.debug("[upstream-req] session=%s\n%s", session_id, json.dumps(scrubbed_body, indent=2))
 
         try:
             async with httpx.AsyncClient(timeout=120.0) as client:
@@ -198,7 +197,7 @@ class Pipeline:
             b["text"] for b in data.get("content", [])
             if isinstance(b, dict) and b.get("type") == "text"
         )
-        log.log(TRACE, "[upstream-res] session=%s\n%s", session_id, raw_text)
+        log.debug("[upstream-res] session=%s\n%s", session_id, raw_text)
 
         for block in data.get("content", []):
             if isinstance(block, dict) and block.get("type") == "text":
@@ -215,7 +214,7 @@ class Pipeline:
             body.get("messages", []), session_id
         )
         scrubbed_body = {**body, "messages": messages}
-        log.log(TRACE, "[upstream-req] session=%s\n%s", session_id, json.dumps(scrubbed_body, indent=2))
+        log.debug("[upstream-req] session=%s\n%s", session_id, json.dumps(scrubbed_body, indent=2))
 
         deob_session = StreamingDeobfuscatorSession(self._engine, session_id)
         accumulated: list[str] = []
@@ -266,7 +265,7 @@ class Pipeline:
                                 "delta": {"type": "text_delta", "text": final},
                             }
                             yield f"data: {json.dumps(flush_event)}\n\n"
-                        log.log(TRACE, "[upstream-res] session=%s\n%s", session_id, "".join(accumulated))
+                        log.debug("[upstream-res] session=%s\n%s", session_id, "".join(accumulated))
                         yield f"data: {json.dumps(event)}\n\n"
 
                     else:
