@@ -19,6 +19,17 @@ class Entity:
             )
 
 
+def resolve_overlaps(entities: list["Entity"]) -> list["Entity"]:
+    """Greedy first-match deduplication. Input must be sorted by start offset."""
+    if not entities:
+        return []
+    result = [entities[0]]
+    for e in entities[1:]:
+        if e.start >= result[-1].end:
+            result.append(e)
+    return result
+
+
 class Detector(ABC):
     """Backend-agnostic interface for PII/NER detection."""
 

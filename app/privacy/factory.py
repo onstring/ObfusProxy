@@ -8,17 +8,35 @@ def create_detector(config: PrivacyConfig) -> Detector:
 
     Only imports concrete backends here. All references elsewhere use
     the Detector ABC, enabling easy extension without touching other code.
+    Single backend → returns that detector directly.
+    Multiple backends → wraps in CompositeDetector.
     """
-    backend = config.backend
-    enabled = config.entities if config.entities else None
     wl = config.whitelist
     exact = frozenset(wl.loopback + wl.domains)
+    ip_ranges = list(wl.ip_ranges)
+    enabled = config.entities or None
 
-    if backend == "regex":
-        from app.privacy.backends.regex import RegexDetector
-        return RegexDetector(enabled_types=enabled, whitelist=exact, ip_ranges=list(wl.ip_ranges))
+    detectors: list[Detector] = []
 
-    raise ValueError(
-        f"Unknown privacy backend: {backend!r}. "
-        f"Supported in Stage 1: ['regex']"
-    )
+    for backend_cfg in config.backends:
+        if backend_cfg.type == "regex":
+            from app.privacy.backends.regex import RegexDetector
+            detectors.append(
+                RegexDetector(enabled_types=enabled, whitelist=exact, ip_ranges=ip_ranges)
+            )
+        elif backend_cfg.type == "presidio":
+            from app.privacy.backends.presidio import PresidioDetector
+            detectors.append(
+                PresidioDetector(enabled_types=enabled, whitelist=exact, model=backend_cfg.model)
+            )
+        else:
+            raise ValueError(
+                f"Unknown privacy backend: {backend_cfg.type!r}. "
+                f"Supported: ['regex', 'presidio']"
+            )
+
+    if len(detectors) == 1:
+        return detectors[0]
+
+    from app.privacy.backends.composite import CompositeDetector
+    return CompositeDetector(detectors)

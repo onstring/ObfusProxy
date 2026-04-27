@@ -4,8 +4,14 @@ server:
 
 privacy:
   enabled: true
-  backend: "regex"
+  backends:
+    - type: "regex"
+    # Uncomment to enable NER (names, addresses, phone numbers, credit cards).
+    # Requires: uv pip install "presidio-analyzer>=2.2.0" && python -m spacy download en_core_web_sm
+    #- type: "presidio"
+    #  model: "en_core_web_sm"
   entities:
+    # Structured PII — handled by regex
     - EMAIL_ADDRESS
     - IP_ADDRESS
     - CIDR
@@ -14,6 +20,11 @@ privacy:
     - SECRET
     - AWS_ARN
     - PORT
+    # Unstructured NER — handled by presidio (uncomment when presidio backend is enabled)
+    #- PERSON
+    #- PHONE_NUMBER
+    #- CREDIT_CARD
+    #- LOCATION
   whitelist:
     loopback:
       - "localhost"

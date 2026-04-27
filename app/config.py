@@ -1,5 +1,4 @@
 from pathlib import Path
-from typing import Literal
 
 import yaml
 from pydantic import BaseModel, field_validator, model_validator
@@ -16,9 +15,14 @@ class WhitelistConfig(BaseModel):
     domains: list[str] = []
 
 
+class BackendConfig(BaseModel):
+    type: str
+    model: str = "en_core_web_sm"
+
+
 class PrivacyConfig(BaseModel):
     enabled: bool = True
-    backend: Literal["regex", "presidio", "transformer", "api"] = "regex"
+    backends: list[BackendConfig] = [BackendConfig(type="regex")]
     entities: list[str] = []
     whitelist: WhitelistConfig = WhitelistConfig()
 

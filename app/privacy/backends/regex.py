@@ -1,7 +1,7 @@
 import ipaddress
 import re
 from dataclasses import dataclass
-from .base import Detector, Entity
+from .base import Detector, Entity, resolve_overlaps
 
 
 # RFC documentation ranges (192.0.2/24, 198.51.100/24, 203.0.113/24) — always safe
@@ -130,7 +130,7 @@ class RegexDetector(Detector):
                 )
 
         raw.sort(key=lambda e: e.start)
-        return self._resolve_overlaps(raw)
+        return resolve_overlaps(raw)
 
     def _is_safe(self, entity_type: str, text: str) -> bool:
         if text in self._whitelist:
@@ -159,18 +159,3 @@ class RegexDetector(Detector):
         except ValueError:
             return False
 
-    @staticmethod
-    def _resolve_overlaps(entities: list[Entity]) -> list[Entity]:
-        """
-        Remove overlapping entities, keeping the first (highest priority) match
-        at each position. Assumes input is sorted by start offset.
-        """
-        if not entities:
-            return []
-
-        result = [entities[0]]
-        for entity in entities[1:]:
-            if entity.start >= result[-1].end:
-                result.append(entity)
-
-        return result
