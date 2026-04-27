@@ -41,8 +41,14 @@ class TestEmailAddress:
 # ---------------------------------------------------------------------------
 
 class TestIpAddress:
-    def test_private_ip(self):
-        assert "IP_ADDRESS" in types("Connect to 10.1.2.3 now.")
+    def test_rfc1918_always_safe(self):
+        # Private ranges are hardcoded safe — no config needed
+        d = RegexDetector()
+        for ip in ["10.1.2.3", "172.16.4.5", "192.168.1.100"]:
+            assert "IP_ADDRESS" not in {e.type for e in d.detect(f"Host {ip} here.")}
+
+    def test_public_ip_detected(self):
+        assert "IP_ADDRESS" in types("DNS server is 8.8.8.8.")
 
     def test_loopback_skipped_by_ip_range(self):
         d = RegexDetector(ip_ranges=["127.0.0.0/8"])
@@ -54,12 +60,13 @@ class TestIpAddress:
         assert "IP_ADDRESS" not in types("Docs use 192.0.2.1 as example.")
 
     def test_ip_in_configured_safe_range(self):
-        d = RegexDetector(ip_ranges=["10.0.0.0/8"])
-        hits = texts("Host 10.20.30.40 is internal.", d=d)
-        assert "10.20.30.40" not in hits
+        # Extra range configured by user (CGNAT) — IPs inside are safe
+        d = RegexDetector(ip_ranges=["100.64.0.0/10"])
+        hits = texts("Carrier-NAT host 100.64.1.1 here.", d=d)
+        assert "100.64.1.1" not in hits
 
     def test_ip_outside_safe_range_detected(self):
-        d = RegexDetector(ip_ranges=["10.0.0.0/8"])
+        d = RegexDetector(ip_ranges=["100.64.0.0/10"])
         hits = texts("Public IP 8.8.8.8 here.", d=d)
         assert "8.8.8.8" in hits
 
@@ -80,21 +87,26 @@ def texts(text: str, d=None, **kwargs) -> list[str]:
 # ---------------------------------------------------------------------------
 
 class TestCidr:
-    def test_basic(self):
-        assert "CIDR" in types("Block 10.0.0.0/8 in firewall.")
+    def test_rfc1918_always_safe(self):
+        d = RegexDetector()
+        for cidr in ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]:
+            assert "CIDR" not in {e.type for e in d.detect(f"Network {cidr} is internal.")}
+
+    def test_public_cidr_detected(self):
+        assert "CIDR" in types("Allow 8.8.0.0/16 in firewall.")
 
     def test_rfc_doc_range_skipped(self):
         assert "CIDR" not in types("Example range 192.0.2.0/24.")
 
-    def test_cidr_in_safe_range(self):
-        d = RegexDetector(ip_ranges=["10.0.0.0/8"])
-        hit_texts = texts("Subnet 10.1.0.0/16 here.", d=d)
-        assert "10.1.0.0/16" not in hit_texts
+    def test_cidr_in_configured_safe_range(self):
+        d = RegexDetector(ip_ranges=["100.64.0.0/10"])
+        hit_texts = texts("Carrier-NAT 100.64.0.0/24 here.", d=d)
+        assert "100.64.0.0/24" not in hit_texts
 
-    def test_cidr_outside_safe_range_detected(self):
-        d = RegexDetector(ip_ranges=["10.0.0.0/8"])
-        hit_texts = texts("External 172.16.0.0/12 subnet.", d=d)
-        assert "172.16.0.0/12" in hit_texts
+    def test_cidr_outside_configured_safe_range_detected(self):
+        d = RegexDetector(ip_ranges=["100.64.0.0/10"])
+        hit_texts = texts("External 8.8.0.0/16 subnet.", d=d)
+        assert "8.8.0.0/16" in hit_texts
 
 
 # ---------------------------------------------------------------------------
@@ -214,7 +226,7 @@ class TestEnabledTypes:
 
     def test_no_filter_detects_multiple_types(self):
         d = RegexDetector()
-        result = d.detect("Email dev@corp.internal IP 10.1.2.3")
+        result = d.detect("Email dev@corp.internal IP 8.8.8.8")
         entity_types = {e.type for e in result}
         assert "EMAIL_ADDRESS" in entity_types
         assert "IP_ADDRESS" in entity_types
@@ -226,10 +238,10 @@ class TestEnabledTypes:
 
 class TestOverlapResolution:
     def test_cidr_wins_over_ip(self):
-        # 10.0.0.0/8 should be caught as CIDR; the IP match inside it is dropped
+        # 8.8.0.0/16 should be caught as CIDR; the bare IP match inside it is dropped
         d = RegexDetector()
-        result = d.detect("Network 10.0.0.0/8 is big.")
+        result = d.detect("Network 8.8.0.0/16 is big.")
         entity_texts = [e.text for e in result]
-        assert "10.0.0.0/8" in entity_texts
-        # The raw IP "10.0.0.0" is inside CIDR span; should not appear separately
-        assert "10.0.0.0" not in entity_texts
+        assert "8.8.0.0/16" in entity_texts
+        # The raw IP "8.8.0.0" is inside CIDR span; should not appear separately
+        assert "8.8.0.0" not in entity_texts

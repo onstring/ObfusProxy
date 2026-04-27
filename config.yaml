@@ -19,7 +19,7 @@ privacy:
     - API_KEY
     - SECRET
     - AWS_ARN
-    - PORT
+    # PORT intentionally omitted — port numbers identify services, not people or secrets
     # Unstructured NER — handled by presidio (uncomment when presidio backend is enabled)
     #- PERSON
     #- PHONE_NUMBER
@@ -31,10 +31,8 @@ privacy:
       - "127.0.0.1"
       - "::1"
       - "0.0.0.0"
-    ip_ranges:
-      - "10.0.0.0/8"
-      - "172.16.0.0/12"
-      - "192.168.0.0/16"
+    ip_ranges: []
+      # RFC 1918 private ranges are hardcoded safe — add extra ranges here if needed
     domains:
       # LLM APIs
       - "api.anthropic.com"

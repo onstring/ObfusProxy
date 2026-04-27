@@ -7,6 +7,13 @@ from .base import Detector, Entity, resolve_overlaps
 # RFC documentation ranges (192.0.2/24, 198.51.100/24, 203.0.113/24) — always safe
 SAFE_PREFIXES = ("192.0.2.", "198.51.100.", "203.0.113.")
 
+# RFC 1918 private ranges — internal addressing, not externally identifiable
+_SAFE_PRIVATE_NETS = [
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+]
+
 
 @dataclass(frozen=True)
 class _Pattern:
@@ -139,6 +146,12 @@ class RegexDetector(Detector):
         if entity_type in ("IP_ADDRESS", "CIDR"):
             if any(text.startswith(p) for p in SAFE_PREFIXES):
                 return True
+            try:
+                net = ipaddress.ip_network(text, strict=False)
+                if any(net.overlaps(safe) for safe in _SAFE_PRIVATE_NETS):
+                    return True
+            except ValueError:
+                pass
             if self._ip_nets and self._in_safe_range(text):
                 return True
 

@@ -87,7 +87,7 @@ class TestCompositeDetector:
         d1 = RegexDetector(enabled_types=["EMAIL_ADDRESS"])
         d2 = RegexDetector(enabled_types=["IP_ADDRESS"])
         composite = CompositeDetector([d1, d2])
-        result = composite.detect("Email dev@corp.internal IP 10.1.2.3")
+        result = composite.detect("Email dev@corp.internal IP 8.8.8.8")
         types = {e.type for e in result}
         assert "EMAIL_ADDRESS" in types
         assert "IP_ADDRESS" in types

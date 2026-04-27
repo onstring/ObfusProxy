@@ -41,10 +41,10 @@ class TestObfuscateText:
 
     async def test_multiple_entities(self):
         engine = make_engine()
-        text = "Email dev@corp.internal IP 10.1.2.3"
+        text = "Email dev@corp.internal IP 8.8.8.8"
         result = await engine._obfuscate_text(text, SESSION)
         assert "dev@corp.internal" not in result
-        assert "10.1.2.3" not in result
+        assert "8.8.8.8" not in result
 
     async def test_no_entities_unchanged(self):
         engine = make_engine()
@@ -84,12 +84,12 @@ class TestObfuscateMessages:
         engine = make_engine()
         messages = [
             {"role": "system", "content": "You are helpful."},
-            {"role": "user", "content": "My IP is 10.1.2.3"},
+            {"role": "user", "content": "My IP is 8.8.8.8"},
             {"role": "assistant", "content": "Got it."},
         ]
         result = await engine.obfuscate(messages, SESSION)
         assert result[0]["content"] == "You are helpful."
-        assert "10.1.2.3" not in result[1]["content"]
+        assert "8.8.8.8" not in result[1]["content"]
         assert result[2]["content"] == "Got it."
 
     async def test_does_not_mutate_input(self):
