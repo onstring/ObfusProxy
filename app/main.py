@@ -36,7 +36,7 @@ async def lifespan(app: FastAPI):
     session_map = SessionMap()
     detector = create_detector(config.privacy)
     engine = PrivacyEngine(detector, session_map)
-    router = ProviderRouter(config)
+    router = ProviderRouter()
     deob = ResponseDeobfuscator(engine)
     _pipeline = Pipeline(engine, router, deob)
 

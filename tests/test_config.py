@@ -3,13 +3,11 @@ import textwrap
 from pathlib import Path
 
 import pytest
-import yaml
 
 from app.config import (
     AppConfig,
     BackendConfig,
     PrivacyConfig,
-    RouterConfig,
     WhitelistConfig,
     load_config,
 )
@@ -69,47 +67,19 @@ class TestPrivacyConfig:
 
 
 # ---------------------------------------------------------------------------
-# AppConfig validators
+# AppConfig
 # ---------------------------------------------------------------------------
 
-def _base_config(**overrides) -> dict:
-    cfg = {
-        "privacy": {"enabled": True, "backends": [{"type": "regex"}], "entities": []},
-        "providers": [
-            {"alias": "fast", "model": "claude-haiku-4-5-20251001"},
-            {"alias": "smart", "model": "claude-sonnet-4-6"},
-        ],
-        "router": {"default_alias": "fast", "fallback_chain": ["fast", "smart"]},
-    }
-    cfg.update(overrides)
-    return cfg
+class TestAppConfig:
+    def test_minimal_valid_config(self):
+        cfg = AppConfig(privacy=PrivacyConfig())
+        assert cfg.server.port == 8080
+        assert cfg.privacy.enabled is True
 
-
-class TestAppConfigValidation:
-    def test_valid_config(self):
-        cfg = AppConfig(**_base_config())
-        assert cfg.router.default_alias == "fast"
-
-    def test_default_alias_not_in_providers_raises(self):
-        data = _base_config()
-        data["router"]["default_alias"] = "nonexistent"
-        with pytest.raises(ValueError, match="default_alias"):
-            AppConfig(**data)
-
-    def test_fallback_chain_alias_not_in_providers_raises(self):
-        data = _base_config()
-        data["router"]["fallback_chain"] = ["fast", "ghost"]
-        with pytest.raises(ValueError, match="fallback_chain"):
-            AppConfig(**data)
-
-    def test_duplicate_provider_aliases_raises(self):
-        data = _base_config()
-        data["providers"] = [
-            {"alias": "fast", "model": "claude-haiku-4-5-20251001"},
-            {"alias": "fast", "model": "claude-sonnet-4-6"},
-        ]
-        with pytest.raises(ValueError, match="unique"):
-            AppConfig(**data)
+    def test_server_defaults(self):
+        cfg = AppConfig(privacy=PrivacyConfig())
+        assert cfg.server.host == "127.0.0.1"
+        assert cfg.server.port == 8080
 
 
 # ---------------------------------------------------------------------------
@@ -143,12 +113,6 @@ class TestLoadConfig:
                 ip_ranges: []
                 domains:
                   - "github.com"
-            providers:
-              - alias: "fast"
-                model: "claude-haiku-4-5-20251001"
-            router:
-              default_alias: "fast"
-              fallback_chain: ["fast"]
         """)
         cfg_file = tmp_path / "config.yaml"
         cfg_file.write_text(yaml_text)

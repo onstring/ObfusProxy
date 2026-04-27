@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel
 
 
 class ServerConfig(BaseModel):
@@ -27,48 +27,9 @@ class PrivacyConfig(BaseModel):
     whitelist: WhitelistConfig = WhitelistConfig()
 
 
-class ProviderConfig(BaseModel):
-    alias: str
-    model: str
-
-
-class RouterConfig(BaseModel):
-    default_alias: str
-    fallback_chain: list[str]
-
-
 class AppConfig(BaseModel):
     server: ServerConfig = ServerConfig()
     privacy: PrivacyConfig
-    providers: list[ProviderConfig]
-    router: RouterConfig
-
-    @model_validator(mode="after")
-    def validate_router_aliases(self) -> "AppConfig":
-        """Verify every alias in fallback_chain exists in providers."""
-        provider_aliases = {p.alias for p in self.providers}
-
-        if self.router.default_alias not in provider_aliases:
-            raise ValueError(
-                f"default_alias '{self.router.default_alias}' not found in providers"
-            )
-
-        for alias in self.router.fallback_chain:
-            if alias not in provider_aliases:
-                raise ValueError(
-                    f"fallback_chain alias '{alias}' not found in providers"
-                )
-
-        return self
-
-    @field_validator("providers")
-    @classmethod
-    def validate_unique_aliases(cls, providers: list[ProviderConfig]) -> list[ProviderConfig]:
-        """Ensure provider aliases are unique."""
-        aliases = [p.alias for p in providers]
-        if len(aliases) != len(set(aliases)):
-            raise ValueError("Provider aliases must be unique")
-        return providers
 
 
 def load_config(path: str = "config.yaml") -> AppConfig:

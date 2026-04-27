@@ -82,22 +82,9 @@ privacy:
     domains:            # Exact domain names never obfuscated
       - "api.anthropic.com"
       - "github.com"
-      - "npmjs.com"
-
-providers:              # Model aliases (used by /v1/chat/completions only)
-  - alias: "fast"
-    model: "claude-haiku-4-5-20251001"
-  - alias: "smart"
-    model: "claude-sonnet-4-6"
-
-router:
-  default_alias: "fast"
-  fallback_chain: ["fast", "smart"]
 ```
 
-API keys come from environment variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, etc.).
-
-> **Note:** `providers` and `router` only apply to the `/v1/chat/completions` path. Claude Code uses `/v1/messages` and passes its own model through directly — the proxy does not override it.
+There is no provider or model configuration. Clients pass real model strings (`claude-haiku-4-5-20251001`, `gpt-4o`, `ollama/llama3`); LiteLLM auto-detects the upstream provider from the model name and reads API keys from environment variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, etc.).
 
 ### Enabling Presidio NER (Optional)
 
@@ -149,14 +136,14 @@ Client
   │
   ├─→ PrivacyEngine.obfuscate (user/tool messages only)
   │     CompositeDetector
-  │       ├─ RegexDetector   → structured PII spans
-  │       └─ PresidioDetector → NER spans   (optional)
+  │       ├─ RegexDetector    → structured PII spans
+  │       └─ PresidioDetector → NER spans (optional)
   │     merge + resolve overlaps → [TYPE_N] placeholders
   │
   ├─→ SessionMap (stores {[TYPE_N] → original} per session)
   │
-  ├─→ /v1/messages        → httpx → api.anthropic.com   (Claude Code path)
-  │   /v1/chat/completions → ProviderRouter → litellm.acompletion
+  ├─→ /v1/messages        → httpx → api.anthropic.com
+  │   /v1/chat/completions → litellm.acompletion (provider auto-detected from model name)
   │
   ├─→ ResponseDeobfuscator (streaming-safe [TYPE_N] → original replacement)
   │
@@ -280,8 +267,6 @@ Edit `app/privacy/backends/regex.py` — add to `_PATTERNS` list. Add a test cas
 1. Create `app/privacy/backends/newbackend.py` implementing the `Detector` ABC
 2. Add one `elif` block in `app/privacy/factory.py`
 3. Optionally add to `[project.optional-dependencies]` in `pyproject.toml`
-
-No other files change.
 
 ## License
 

@@ -47,10 +47,8 @@ Edit `config.yaml` to control:
 - **Privacy backends** — `regex` (always on) and/or `presidio` (optional NER; requires extra install)
 - **Entity types to detect** — filters which types any backend may emit
 - **Whitelist** — structured into `loopback`, `ip_ranges` (CIDR), and `domains`
-- **Providers** — model aliases for the `/v1/chat/completions` path only
-- **Router** — default model alias and fallback chain (OpenAI-compatible path only)
 
-> Claude Code uses `/v1/messages` and passes its own model through. The `providers`/`router` config is irrelevant for Claude Code — it only applies to curl/SDK clients hitting `/v1/chat/completions`.
+Model selection and provider routing are handled entirely by the client and LiteLLM — not configured here. Clients pass real model strings (`claude-sonnet-4-6`, `gpt-4o`, `ollama/llama3`); LiteLLM auto-detects the upstream provider from the model name and reads credentials from environment variables.
 
 ### Backends
 
@@ -112,6 +110,13 @@ whitelist:
 ```
 
 Hardcoded universal safe list (always applied, regardless of config): RFC documentation ranges `192.0.2.*`, `198.51.100.*`, `203.0.113.*`.
+
+### Provider and Model Routing
+
+There is no provider or model config. The proxy is fully transparent:
+
+- **`/v1/messages`** — forwards to `api.anthropic.com` verbatim; model passes through unchanged
+- **`/v1/chat/completions`** — passes model string to LiteLLM; LiteLLM auto-detects the upstream provider from the model name (`claude-*` → Anthropic, `gpt-*` → OpenAI, `ollama/*` → Ollama, etc.) and reads credentials from environment variables
 
 ## Logging
 
@@ -410,9 +415,9 @@ Or use a different port: `uvicorn app.main:app --host 127.0.0.1 --port 8081`
 
 Check `config.yaml` — `privacy.backends[*].type` must be `"regex"` or `"presidio"`. For presidio, the package must be installed (`uv pip install "presidio-analyzer>=2.2.0"`).
 
-### "Provider alias not found"
+### LiteLLM raises "model not found" or 400 error
 
-Check `config.yaml` — ensure the alias in `router.default_alias` and `router.fallback_chain` exists in `providers`.
+The client must send a valid model string that LiteLLM recognises (e.g. `claude-haiku-4-5-20251001`, `gpt-4o`). The proxy no longer maps aliases — pass the full model name.
 
 ### Session data not de-obfuscated
 
