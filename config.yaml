@@ -15,10 +15,40 @@ privacy:
     - AWS_ARN
     - PORT
   whitelist:
-    - "example.com"
-    - "github.com"
-    - "api.openai.com"
-    - "api.anthropic.com"
+    loopback:
+      - "localhost"
+      - "127.0.0.1"
+      - "::1"
+      - "0.0.0.0"
+    ip_ranges:
+      - "10.0.0.0/8"
+      - "172.16.0.0/12"
+      - "192.168.0.0/16"
+    domains:
+      # LLM APIs
+      - "api.anthropic.com"
+      - "api.openai.com"
+      # Source control
+      - "github.com"
+      - "gitlab.com"
+      - "bitbucket.org"
+      # npm / Node
+      - "npmjs.com"
+      - "registry.npmjs.org"
+      - "nodejs.org"
+      # Python
+      - "pypi.org"
+      - "files.pythonhosted.org"
+      # Go
+      - "golang.org"
+      - "pkg.go.dev"
+      # Container registries
+      - "docker.io"
+      - "hub.docker.com"
+      - "gcr.io"
+      - "ghcr.io"
+      # Google
+      - "googleapis.com"
 
 providers:
   - alias: "fast"

@@ -10,11 +10,17 @@ class ServerConfig(BaseModel):
     port: int = 8080
 
 
+class WhitelistConfig(BaseModel):
+    loopback: list[str] = ["localhost", "127.0.0.1", "::1", "0.0.0.0"]
+    ip_ranges: list[str] = []
+    domains: list[str] = []
+
+
 class PrivacyConfig(BaseModel):
     enabled: bool = True
     backend: Literal["regex", "presidio", "transformer", "api"] = "regex"
     entities: list[str] = []
-    whitelist: list[str] = []
+    whitelist: WhitelistConfig = WhitelistConfig()
 
 
 class ProviderConfig(BaseModel):

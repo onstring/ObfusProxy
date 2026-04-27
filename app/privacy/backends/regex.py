@@ -1,9 +1,10 @@
+import ipaddress
 import re
 from dataclasses import dataclass
 from .base import Detector, Entity
 
 
-SAFE_IPS = frozenset({"127.0.0.1", "0.0.0.0", "::1", "localhost"})
+# RFC documentation ranges (192.0.2/24, 198.51.100/24, 203.0.113/24) — always safe
 SAFE_PREFIXES = ("192.0.2.", "198.51.100.", "203.0.113.")
 
 
@@ -87,9 +88,15 @@ _PATTERNS = [
 class RegexDetector(Detector):
     """Regex-based PII/NER detector using stdlib re module."""
 
-    def __init__(self, enabled_types: list[str] | None = None, whitelist: frozenset[str] | None = None) -> None:
+    def __init__(
+        self,
+        enabled_types: list[str] | None = None,
+        whitelist: frozenset[str] | None = None,
+        ip_ranges: list[str] | None = None,
+    ) -> None:
         self._enabled = set(enabled_types) if enabled_types else None
         self._whitelist = whitelist or frozenset()
+        self._ip_nets = [ipaddress.ip_network(r, strict=False) for r in (ip_ranges or [])]
 
     @property
     def name(self) -> str:
@@ -130,18 +137,27 @@ class RegexDetector(Detector):
             return True
 
         if entity_type in ("IP_ADDRESS", "CIDR"):
-            if text in SAFE_IPS or any(text.startswith(p) for p in SAFE_PREFIXES):
+            if any(text.startswith(p) for p in SAFE_PREFIXES):
+                return True
+            if self._ip_nets and self._in_safe_range(text):
                 return True
 
         if entity_type == "PORT":
             try:
-                port = int(text)
-                if port > 65535:
+                if int(text) > 65535:
                     return True
             except ValueError:
                 return True
 
         return False
+
+    def _in_safe_range(self, text: str) -> bool:
+        """Return True if text (IP or CIDR) falls within any configured safe ip_range."""
+        try:
+            net = ipaddress.ip_network(text, strict=False)
+            return any(net.overlaps(safe) for safe in self._ip_nets)
+        except ValueError:
+            return False
 
     @staticmethod
     def _resolve_overlaps(entities: list[Entity]) -> list[Entity]:

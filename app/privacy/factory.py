@@ -11,11 +11,12 @@ def create_detector(config: PrivacyConfig) -> Detector:
     """
     backend = config.backend
     enabled = config.entities if config.entities else None
-    whitelist = frozenset(config.whitelist)
+    wl = config.whitelist
+    exact = frozenset(wl.loopback + wl.domains)
 
     if backend == "regex":
         from app.privacy.backends.regex import RegexDetector
-        return RegexDetector(enabled_types=enabled, whitelist=whitelist)
+        return RegexDetector(enabled_types=enabled, whitelist=exact, ip_ranges=list(wl.ip_ranges))
 
     raise ValueError(
         f"Unknown privacy backend: {backend!r}. "
