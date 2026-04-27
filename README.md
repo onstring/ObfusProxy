@@ -5,11 +5,11 @@ A local LLM privacy proxy for DevOps. Transparently obfuscates sensitive data (P
 ## Features
 
 - **Transparent privacy** — Prompts are obfuscated before leaving your machine; responses are restored invisibly
-- **Pluggable detectors** — Stage 1 uses regex (fast, zero dependencies); future backends (Presidio, BERT, API) can be added without code changes
+- **Multi-backend detection** — Regex handles structured PII (emails, IPs, API keys, secrets); Presidio NER handles unstructured entities (names, phone numbers, credit cards). Backends compose via `CompositeDetector`
 - **Session persistence** — Same entity always gets the same placeholder within a session (coherent conversation)
 - **Streaming-safe** — Handles placeholders split across streaming chunks with lookahead buffering
-- **DevOps-focused** — Detects emails, IPs (with safe-list), CIDRs, domains, API keys, secrets, AWS ARNs, ports
-- **Configurable whitelist** — Public infrastructure like `github.com` or `api.anthropic.com` never gets obfuscated
+- **DevOps-focused** — Detects emails, IPs, CIDRs, domains, API keys, secrets, AWS ARNs, ports
+- **Structured whitelist** — Loopback addresses, RFC-private IP ranges, and well-known domains never get obfuscated
 - **Dual protocol** — Native Anthropic `/v1/messages` (for Claude Code) and OpenAI-compatible `/v1/chat/completions`
 - **Role-aware** — Only `user` and `tool` messages are obfuscated; assistant turns and system prompts pass through unchanged
 
@@ -51,8 +51,11 @@ server:
 
 privacy:
   enabled: true
-  backend: "regex"        # Only backend in Stage 1
-  entities:               # Entity types to detect
+  backends:
+    - type: "regex"           # Always on — structured PII
+    # - type: "presidio"      # Optional — NER (names, phones, credit cards)
+    #   model: "en_core_web_sm"
+  entities:
     - EMAIL_ADDRESS
     - IP_ADDRESS
     - CIDR
@@ -61,11 +64,27 @@ privacy:
     - SECRET
     - AWS_ARN
     - PORT
-  whitelist:              # Never obfuscate these
-    - "github.com"
-    - "api.anthropic.com"
+    # NER entities (presidio only — uncomment when presidio backend is enabled)
+    # - PERSON
+    # - PHONE_NUMBER
+    # - CREDIT_CARD
+    # - LOCATION
+  whitelist:
+    loopback:           # Exact strings never obfuscated
+      - "localhost"
+      - "127.0.0.1"
+      - "::1"
+      - "0.0.0.0"
+    ip_ranges:          # CIDR ranges — IPs/CIDRs inside are skipped
+      - "10.0.0.0/8"
+      - "172.16.0.0/12"
+      - "192.168.0.0/16"
+    domains:            # Exact domain names never obfuscated
+      - "api.anthropic.com"
+      - "github.com"
+      - "npmjs.com"
 
-providers:                # Model aliases (used by /v1/chat/completions only)
+providers:              # Model aliases (used by /v1/chat/completions only)
   - alias: "fast"
     model: "claude-haiku-4-5-20251001"
   - alias: "smart"
@@ -76,22 +95,37 @@ router:
   fallback_chain: ["fast", "smart"]
 ```
 
-API keys come from environment variables (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc.).
+API keys come from environment variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, etc.).
 
 > **Note:** `providers` and `router` only apply to the `/v1/chat/completions` path. Claude Code uses `/v1/messages` and passes its own model through directly — the proxy does not override it.
 
+### Enabling Presidio NER (Optional)
+
+Presidio uses spaCy for named entity recognition. Install separately:
+
+```bash
+uv pip install "presidio-analyzer>=2.2.0"
+python -m spacy download en_core_web_sm
+```
+
+Then uncomment the `presidio` backend and NER entities in `config.yaml`.
+
 ## Entity Types Detected
 
-| Type | Examples | Safe List |
-|---|---|---|
-| `EMAIL_ADDRESS` | `dev@corp.internal` | — |
-| `IP_ADDRESS` | `10.0.0.1` | `127.0.0.1`, `0.0.0.0`, RFC-DOC ranges |
-| `CIDR` | `10.0.0.0/8` | — |
-| `DOMAIN` | `db.corp.internal` | Configurable whitelist |
-| `API_KEY` | `sk-abc123...`, `Bearer ABC...` | — |
-| `SECRET` | URLs with creds, PEM keys, DSN passwords | — |
-| `AWS_ARN` | `arn:aws:iam::123456789012:role/DevRole` | — |
-| `PORT` | `:8080`, `port 5432` | — |
+| Type | Backend | Examples | Safe List |
+|---|---|---|---|
+| `EMAIL_ADDRESS` | regex | `dev@corp.internal` | Configurable whitelist |
+| `IP_ADDRESS` | regex | `10.0.0.1` | Loopback, RFC-DOC ranges, configured ip_ranges |
+| `CIDR` | regex | `10.0.0.0/8` | RFC-DOC ranges, configured ip_ranges |
+| `DOMAIN` | regex | `db.corp.internal` | Configurable domains list |
+| `API_KEY` | regex | `sk-abc123...`, `Bearer ABC...` | — |
+| `SECRET` | regex | DSN URLs, env-var assignments, PEM keys | — |
+| `AWS_ARN` | regex | `arn:aws:iam::123456789012:role/DevRole` | — |
+| `PORT` | regex | `:8080` | Ports > 65535 |
+| `PERSON` | presidio | `John Smith` | — |
+| `PHONE_NUMBER` | presidio | `+1-555-867-5309` | — |
+| `CREDIT_CARD` | presidio | `4111 1111 1111 1111` | — |
+| `LOCATION` | presidio | `San Francisco, CA` | — |
 
 **Not detected (not sensitive):** UUID, DOCKER_IMAGE, K8S_RESOURCE
 
@@ -114,11 +148,14 @@ Client
   ├─→ FastAPI gateway (mints/reads X-Session-Id)
   │
   ├─→ PrivacyEngine.obfuscate (user/tool messages only)
-  │     RegexDetector → entities → [TYPE_N] placeholders
+  │     CompositeDetector
+  │       ├─ RegexDetector   → structured PII spans
+  │       └─ PresidioDetector → NER spans   (optional)
+  │     merge + resolve overlaps → [TYPE_N] placeholders
   │
   ├─→ SessionMap (stores {[TYPE_N] → original} per session)
   │
-  ├─→ /v1/messages      → httpx → api.anthropic.com  (Claude Code path)
+  ├─→ /v1/messages        → httpx → api.anthropic.com   (Claude Code path)
   │   /v1/chat/completions → ProviderRouter → litellm.acompletion
   │
   ├─→ ResponseDeobfuscator (streaming-safe [TYPE_N] → original replacement)
@@ -167,88 +204,84 @@ OBFUSPROXY_LOG_LEVEL=TRACE uvicorn app.main:app --host 127.0.0.1 --port 8080 --w
 
 ## Testing
 
-### Unit Tests
-
 ```bash
-pytest tests/test_regex.py           # RegexDetector patterns
-pytest tests/test_session.py         # SessionMap
-pytest tests/test_engine.py          # Round-trip obfuscate/deobfuscate
-pytest tests/test_deobfuscator.py    # Streaming split logic
+# All tests (100 tests)
+pytest
+
+# Individual modules
+pytest tests/test_regex.py        -v  # RegexDetector — all entity types, safe ranges, whitelist
+pytest tests/test_session.py      -v  # SessionMap — idempotency, counters, concurrency
+pytest tests/test_engine.py       -v  # PrivacyEngine — round-trip, role filtering
+pytest tests/test_deobfuscator.py -v  # Streaming de-obfuscation, split-placeholder buffering
+pytest tests/test_composite.py    -v  # CompositeDetector — merging, overlap priority
+pytest tests/test_config.py       -v  # Config loading and Pydantic validation
+
+# With coverage
+pytest --cov=app --cov-report=term-missing
 ```
 
-### Manual Integration Testing
-
-```bash
-# Health check
-curl http://localhost:8080/health
-
-# Chat with PII (OpenAI-compatible path)
-curl -s http://localhost:8080/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "X-Session-Id: test-session" \
-  -d '{
-    "model": "fast",
-    "messages": [{
-      "role": "user",
-      "content": "My email is dev@corp.internal and server is 10.1.2.3"
-    }]
-  }' | jq .
-
-# Delete session
-curl -X DELETE http://localhost:8080/session/test-session
-```
-
-## Key Constraints (Stage 1)
+## Key Constraints
 
 - **Single worker only** — `--workers 1` required (session map is in-process memory)
 - **No session TTL** — restart to clear sensitive data
 - **IPv6 not detected** — only loopback `::1` in safe list
 - **No authentication** — operates on localhost only
-- **Volatile storage** — session map is memory-only
-- **Placeholder collision edge case** — if user types `[IP_ADDRESS_0]` literally, it will be back-substituted (acceptable for Stage 1)
+- **Volatile storage** — session map is memory-only by design
+- **Placeholder collision edge case** — if user types `[IP_ADDRESS_0]` literally, it will be back-substituted
 
 ## Project Structure
 
 ```
 ObfusProxy/
-├── .venv/              # Virtual environment (uv)
+├── .venv/                  # Virtual environment (uv)
 ├── app/
-│   ├── main.py        # FastAPI app + routes
-│   ├── config.py      # Pydantic config schema
-│   ├── log.py         # TRACE log level definition
-│   ├── pipeline.py    # Obfuscate → route → deobfuscate
-│   ├── router.py      # LiteLLM wrapper
-│   ├── deobfuscator.py # Streaming de-obfuscation
+│   ├── main.py            # FastAPI app + routes
+│   ├── config.py          # Pydantic config schema
+│   ├── log.py             # TRACE log level definition
+│   ├── pipeline.py        # Obfuscate → route → deobfuscate
+│   ├── router.py          # LiteLLM wrapper
+│   ├── deobfuscator.py    # Streaming de-obfuscation
 │   └── privacy/
-│       ├── engine.py       # PrivacyEngine
-│       ├── session.py      # SessionMap
-│       ├── factory.py      # Detector factory
+│       ├── engine.py      # PrivacyEngine
+│       ├── session.py     # SessionMap
+│       ├── factory.py     # Detector factory (single or composite)
 │       └── backends/
-│           ├── base.py     # Detector ABC
-│           └── regex.py    # RegexDetector (Stage 1)
-├── config.yaml        # Configuration
-├── pyproject.toml     # Dependencies
-├── CLAUDE.md          # Claude Code guide (setup, testing, troubleshooting)
-└── README.md          # This file
+│           ├── base.py        # Detector ABC + Entity + resolve_overlaps()
+│           ├── regex.py       # RegexDetector — structured PII
+│           ├── composite.py   # CompositeDetector — wraps N backends
+│           └── presidio.py    # PresidioDetector — NER (optional)
+├── tests/
+│   ├── conftest.py            # Shared fixtures
+│   ├── test_regex.py          # RegexDetector (24 tests)
+│   ├── test_session.py        # SessionMap (17 tests)
+│   ├── test_engine.py         # PrivacyEngine (15 tests)
+│   ├── test_deobfuscator.py   # Streaming de-obfuscation (13 tests)
+│   ├── test_composite.py      # CompositeDetector (8 tests)
+│   └── test_config.py         # Config loading and validation (11 tests)
+├── config.yaml            # Configuration
+├── pyproject.toml         # Dependencies
+├── CLAUDE.md              # Claude Code guide (setup, testing, troubleshooting)
+└── README.md              # This file
 ```
 
 ## Future Stages
 
-- **Stage 2:** Presidio + spacy backend, Redis session store, multi-worker, rate limiting
-- **Stage 3:** BERT NER backend, IPv6 CIDR, session TTL + eviction, Prometheus metrics
-- **Stage 4+:** API-based NER, keyring integration, hot-config reload, audit logging
+- **Stage 3:** Redis session store, multi-worker support, session TTL + eviction, Prometheus metrics
+- **Stage 4+:** BERT NER backend, IPv6 CIDR detection, keyring integration, hot-config reload, audit logging
 
 ## Development
 
 ### Adding a New Entity Pattern
 
-Edit `app/privacy/backends/regex.py` — add to `_PATTERNS` list. No other files change.
+Edit `app/privacy/backends/regex.py` — add to `_PATTERNS` list. Add a test case to `tests/test_regex.py`. No other files change.
 
-### Adding a New Backend (e.g., Presidio)
+### Adding a New Backend
 
-1. Create `app/privacy/backends/presidio.py` implementing `Detector` ABC
+1. Create `app/privacy/backends/newbackend.py` implementing the `Detector` ABC
 2. Add one `elif` block in `app/privacy/factory.py`
-3. Done — zero changes to rest of codebase
+3. Optionally add to `[project.optional-dependencies]` in `pyproject.toml`
+
+No other files change.
 
 ## License
 

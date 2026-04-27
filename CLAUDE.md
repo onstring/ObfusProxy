@@ -4,7 +4,7 @@
 
 **ObfusProxy** is a local LLM privacy proxy for DevOps daily use. It sits between developer tools (Claude Code, curl, any OpenAI-SDK client) and cloud LLM providers, transparently obfuscating sensitive data in prompts and de-obfuscating responses.
 
-**Current stage:** Stage 1 (regex-based detection only; architecture ready for Presidio/BERT/API backends in future stages).
+**Current stage:** Stage 2 — regex backend for structured PII + optional Presidio NER backend for unstructured entities (names, phone numbers, credit cards). Backends compose via `CompositeDetector`.
 
 ## Quick Start
 
@@ -44,13 +44,74 @@ The proxy intercepts all requests, obfuscates PII in `user` and `tool` messages,
 Edit `config.yaml` to control:
 
 - **Server host/port** — where the proxy listens
-- **Privacy backend** — `regex` (Stage 1) or future `presidio`, `transformer`, `api`
-- **Entity types to detect** — `EMAIL_ADDRESS`, `IP_ADDRESS`, `DOMAIN`, `API_KEY`, `SECRET`, `AWS_ARN`, `PORT`, `CIDR`
-- **Whitelist** — values that should never be obfuscated (e.g., `github.com`, `api.anthropic.com`)
+- **Privacy backends** — `regex` (always on) and/or `presidio` (optional NER; requires extra install)
+- **Entity types to detect** — filters which types any backend may emit
+- **Whitelist** — structured into `loopback`, `ip_ranges` (CIDR), and `domains`
 - **Providers** — model aliases for the `/v1/chat/completions` path only
 - **Router** — default model alias and fallback chain (OpenAI-compatible path only)
 
 > Claude Code uses `/v1/messages` and passes its own model through. The `providers`/`router` config is irrelevant for Claude Code — it only applies to curl/SDK clients hitting `/v1/chat/completions`.
+
+### Backends
+
+The `backends` list is ordered. When multiple backends are configured, a `CompositeDetector` wraps them all — results are merged and overlaps resolved (first-listed backend wins on ties).
+
+**Regex only (default):**
+```yaml
+privacy:
+  backends:
+    - type: "regex"
+```
+
+**Regex + Presidio NER:**
+```yaml
+privacy:
+  backends:
+    - type: "regex"
+    - type: "presidio"
+      model: "en_core_web_sm"   # optional, default shown
+  entities:
+    - EMAIL_ADDRESS
+    - IP_ADDRESS
+    - CIDR
+    - DOMAIN
+    - API_KEY
+    - SECRET
+    - AWS_ARN
+    - PORT
+    - PERSON
+    - PHONE_NUMBER
+    - CREDIT_CARD
+    - LOCATION
+```
+
+**Install Presidio (optional):**
+```bash
+uv pip install "presidio-analyzer>=2.2.0"
+python -m spacy download en_core_web_sm
+```
+
+### Whitelist
+
+The whitelist is structured into three categories:
+
+```yaml
+whitelist:
+  loopback:         # Exact-match strings (never obfuscated)
+    - "localhost"
+    - "127.0.0.1"
+    - "::1"
+    - "0.0.0.0"
+  ip_ranges:        # CIDR ranges — IPs/CIDRs falling inside are skipped
+    - "10.0.0.0/8"
+    - "172.16.0.0/12"
+    - "192.168.0.0/16"
+  domains:          # Exact-match domain names
+    - "api.anthropic.com"
+    - "github.com"
+```
+
+Hardcoded universal safe list (always applied, regardless of config): RFC documentation ranges `192.0.2.*`, `198.51.100.*`, `203.0.113.*`.
 
 ## Logging
 
@@ -89,10 +150,19 @@ Sample DEBUG output:
 ### Unit Tests
 
 ```bash
-pytest tests/test_regex.py           # RegexDetector patterns
-pytest tests/test_session.py         # SessionMap idempotency
-pytest tests/test_engine.py          # Round-trip obfuscate/deobfuscate
-pytest tests/test_deobfuscator.py    # Streaming split logic
+# All tests
+pytest
+
+# Individual modules
+pytest tests/test_regex.py        -v  # RegexDetector — all entity types, safe ranges, whitelist
+pytest tests/test_session.py      -v  # SessionMap — idempotency, counters, concurrency
+pytest tests/test_engine.py       -v  # PrivacyEngine — round-trip, role filtering
+pytest tests/test_deobfuscator.py -v  # Streaming de-obfuscation, split-placeholder buffering
+pytest tests/test_composite.py    -v  # CompositeDetector — merging, overlap priority
+pytest tests/test_config.py       -v  # Config loading and Pydantic validation
+
+# With coverage
+pytest --cov=app --cov-report=term-missing
 ```
 
 ### Manual Integration Testing
@@ -161,11 +231,21 @@ ObfusProxy/
 │       ├── __init__.py
 │       ├── engine.py      # PrivacyEngine: obfuscate/deobfuscate, role filtering
 │       ├── session.py     # SessionMap: asyncio-safe in-memory store
-│       ├── factory.py     # Factory: config → Detector
+│       ├── factory.py     # Factory: config → Detector (or CompositeDetector)
 │       └── backends/
 │           ├── __init__.py
-│           ├── base.py    # Detector ABC + Entity dataclass
-│           └── regex.py   # RegexDetector (Stage 1)
+│           ├── base.py        # Detector ABC, Entity dataclass, resolve_overlaps()
+│           ├── regex.py       # RegexDetector — structured PII (emails, IPs, keys, …)
+│           ├── composite.py   # CompositeDetector — wraps N backends, merges spans
+│           └── presidio.py    # PresidioDetector — NER via spaCy (optional)
+├── tests/
+│   ├── conftest.py            # Shared fixtures
+│   ├── test_regex.py          # RegexDetector — all entity types
+│   ├── test_session.py        # SessionMap
+│   ├── test_engine.py         # PrivacyEngine
+│   ├── test_deobfuscator.py   # Streaming de-obfuscation
+│   ├── test_composite.py      # CompositeDetector
+│   └── test_config.py         # Config loading and validation
 ├── config.yaml            # Configuration
 ├── pyproject.toml         # Dependencies, build config
 └── CLAUDE.md              # This file
@@ -199,6 +279,36 @@ Role-based filtering ensures only user-originated content is obfuscated:
 | `tool` / `tool_result` blocks | Yes | Tool output may contain sensitive data |
 | `assistant` | No | LLM-generated text |
 | `system` | No | Client-controlled instructions |
+
+### Multi-Backend Detection
+
+The factory builds the detector from `config.yaml`:
+
+- **Single backend** → returned directly
+- **Multiple backends** → wrapped in `CompositeDetector`
+
+`CompositeDetector` calls each backend in order, merges all entity spans, sorts by start offset, then runs greedy overlap resolution (earlier span wins). This means regex always beats Presidio on any overlapping detection.
+
+### Entity Types
+
+| Type | Backend | Examples |
+|---|---|---|
+| `EMAIL_ADDRESS` | regex | `dev@corp.internal` |
+| `IP_ADDRESS` | regex | `10.0.0.1` |
+| `CIDR` | regex | `10.0.0.0/8` |
+| `DOMAIN` | regex | `db.corp.internal`, `redis.svc.cluster.local` |
+| `API_KEY` | regex | `Bearer ABC...`, `sk-abc123...`, long hex |
+| `SECRET` | regex | DSN URLs, env-var assignments, PEM keys |
+| `AWS_ARN` | regex | `arn:aws:iam::123456789012:role/DevRole` |
+| `PORT` | regex | `:8080` |
+| `PERSON` | presidio | `John Smith` |
+| `PHONE_NUMBER` | presidio | `+1-555-867-5309` |
+| `CREDIT_CARD` | presidio | `4111 1111 1111 1111` |
+| `LOCATION` | presidio | `San Francisco, CA` |
+
+**Not detected (not sensitive):** UUID, DOCKER_IMAGE, K8S_RESOURCE.
+
+**Note on PORT detection:** The PORT regex captures `:NNNN` syntax (e.g., `host:8080`). The `port N` word-form alternative is present in the pattern but its digits fall in a different capture group — only `:NNNN` style is currently emitted.
 
 ### Placeholder Format
 
@@ -238,74 +348,48 @@ Handles split placeholders like `[DOMAIN_5]` arriving as `[DOMA` + `IN_5]` acros
 4. Keeps partial suffix buffered, waiting for closing `]`
 5. On stream end (`content_block_stop` for Anthropic, `[DONE]` for OpenAI), flushes remaining buffer
 
-### Entity Types (Stage 1)
-
-| Type | Examples |
-|---|---|
-| `EMAIL_ADDRESS` | `dev@corp.internal`, `alice@github.com` |
-| `IP_ADDRESS` | `10.0.0.1` (not `127.0.0.1`, loopback, or RFC-DOC ranges) |
-| `CIDR` | `10.0.0.0/8`, `192.168.0.0/16` |
-| `DOMAIN` | `db.corp.internal`, `redis.svc.cluster.local` |
-| `API_KEY` | `Bearer ABC...`, `sk-abc123...`, long hex strings |
-| `SECRET` | URLs with creds, env var assignments, PEM private keys, DSN passwords |
-| `AWS_ARN` | `arn:aws:iam::123456789012:role/DevRole` |
-| `PORT` | `:8080`, `port 5432` |
-
-**Not detected (not sensitive):** UUID, DOCKER_IMAGE, K8S_RESOURCE.
-
-### Whitelist
-
-Values that should never be obfuscated (from `config.yaml`):
-```yaml
-whitelist:
-  - "github.com"
-  - "api.anthropic.com"
-```
-
-Hardcoded safe list: `127.0.0.1`, `0.0.0.0`, `::1`, `localhost`, and RFC documentation ranges (`192.0.2.*`, `198.51.100.*`, `203.0.113.*`).
-
 ## Development Workflow
 
 ### Adding a New Entity Pattern
 
 1. Edit `app/privacy/backends/regex.py` — add pattern to `_PATTERNS` list
-2. Test: `pytest tests/test_regex.py` with new test case
+2. Add test case to `tests/test_regex.py`
 3. No other files change
 
-### Adding a New Backend (e.g., Presidio)
+### Adding a New Backend
 
-1. Create `app/privacy/backends/presidio.py` implementing `Detector` ABC
-2. Add one `elif` block in `app/privacy/factory.py`
-3. Update `config.yaml` to support `backend: presidio`
-4. No other files change
+1. Create `app/privacy/backends/newbackend.py` implementing the `Detector` ABC
+2. Add one `elif backend_cfg.type == "newbackend":` block in `app/privacy/factory.py`
+3. Optionally add to `[project.optional-dependencies]` in `pyproject.toml`
+4. Add tests in `tests/test_composite.py` or a new test file
 
 ### Running Tests
 
 ```bash
-# All tests
+# All tests (100 tests, ~0.5s)
 pytest
 
-# Specific test file
+# Specific test file with verbose output
 pytest tests/test_regex.py -v
 
-# With coverage
-pytest --cov=app
+# With coverage report
+pytest --cov=app --cov-report=term-missing
 ```
 
-## Known Constraints (Stage 1)
+## Known Constraints (Stage 2)
 
 - **Single worker only** — `--workers 1` required; session map is in-process memory
 - **No session TTL** — restart to clear sensitive data
 - **IPv6 not detected** — only loopback `::1` is in safe list
 - **No authentication** — operates on localhost only
 - **No persistence** — session map is volatile (by design)
-- **Placeholder collision edge case** — if user types `[IP_ADDRESS_0]` literally, it will be back-substituted (acceptable for Stage 1)
+- **Placeholder collision edge case** — if user types `[IP_ADDRESS_0]` literally, it will be back-substituted (acceptable for Stage 2)
+- **PORT word-form dead code** — `port N` syntax in PORT regex hits group 2, but code reads group 1; only `:NNNN` style is emitted
 
 ## Future Stages
 
-- **Stage 2:** Presidio + spacy backend, Redis session store, multi-worker, rate limiting, basic auth
-- **Stage 3:** BERT NER backend, IPv6 CIDR, session TTL + eviction, Prometheus metrics
-- **Stage 4+:** API-based NER, keyring integration, hot-config reload, audit logging
+- **Stage 3:** Redis session store, multi-worker support, session TTL + eviction, Prometheus metrics
+- **Stage 4+:** BERT NER backend, IPv6 CIDR detection, keyring integration, hot-config reload, audit logging
 
 ## Troubleshooting
 
@@ -322,9 +406,9 @@ Or use a different port: `uvicorn app.main:app --host 127.0.0.1 --port 8081`
 
 `ANTHROPIC_API_KEY` is not set in the proxy's terminal. The key must be exported before starting uvicorn, not just in the Claude Code terminal.
 
-### "Unknown backend: regex"
+### "Unknown backend: ..."
 
-Check `config.yaml` — `privacy.backend` should be `regex`.
+Check `config.yaml` — `privacy.backends[*].type` must be `"regex"` or `"presidio"`. For presidio, the package must be installed (`uv pip install "presidio-analyzer>=2.2.0"`).
 
 ### "Provider alias not found"
 
