@@ -85,20 +85,21 @@ privacy:
 ```bash
 uv pip install "presidio-analyzer>=2.2.0"
 # Transformer model (recommended — far fewer false positives on technical/markdown text):
-uv pip install "spacy[transformers]"   # pins torch<2.3; requires numpy<2 (see below)
-uv pip install "numpy<2"               # spacy[transformers] pulls torch 2.2.2 which was
-                                       # compiled against NumPy 1.x C API; NumPy 2.x breaks it
+uv pip install "spacy[transformers]"
+# Intel macOS only — see "Platform note" below:
+uv pip install "numpy<2"
 python -m spacy download en_core_web_trf
 
 # Lightweight alternative (more false positives on code/markdown):
 # python -m spacy download en_core_web_sm
 ```
 
-> **Dependency note:** `spacy[transformers]` pins `torch<2.3` (currently installs torch 2.2.2).
-> That torch version was compiled against the NumPy 1.x C API. If NumPy 2.x is present in the
-> environment, torch crashes at import time with `_ARRAY_API not found`. Pinning `numpy<2` is the
-> correct fix. You cannot upgrade torch past 2.2.x without upgrading spacy-transformers first,
-> which is a separate upstream dependency issue.
+> **Platform note (Intel macOS only):** `spacy-transformers` itself only requires `torch>=1.8.0`
+> with no upper bound. The real constraint is that **PyTorch dropped Intel macOS wheels after 2.2.2**.
+> On `x86_64` Macs `uv` resolves to torch 2.2.2, which was compiled against the NumPy 1.x C API and
+> crashes at import with `_ARRAY_API not found` if NumPy 2.x is installed — hence the `numpy<2` pin.
+> On Apple Silicon, Linux, and Windows, torch 2.5+ ships with NumPy 2.x compatibility and the pin
+> is unnecessary. If you run the proxy in Docker on Linux you can drop the `numpy<2` pin entirely.
 
 ### Whitelist
 

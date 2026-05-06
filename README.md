@@ -92,16 +92,18 @@ uv pip install "presidio-analyzer>=2.2.0"
 
 # Transformer model — recommended; far fewer false positives on code/markdown text
 uv pip install "spacy[transformers]"
-uv pip install "numpy<2"        # required: spacy[transformers] installs torch 2.2.2 which
-                                # was compiled against NumPy 1.x; NumPy 2.x breaks it
+# Intel macOS only (see platform note below):
+uv pip install "numpy<2"
 python -m spacy download en_core_web_trf
 
 # Lightweight fallback (more false positives but no extra dependencies):
 # python -m spacy download en_core_web_sm
 ```
 
-> **Note:** `spacy[transformers]` pins `torch<2.3`. This is a spacy-transformers upstream
-> constraint — you cannot upgrade torch while keeping this model.
+> **Platform note:** The `numpy<2` pin is **only needed on Intel macOS**. PyTorch dropped Intel-Mac
+> wheels after 2.2.2, and torch 2.2.2 was compiled against the NumPy 1.x C API. On Apple Silicon,
+> Linux, and Windows, modern torch (2.5+) installs cleanly with NumPy 2.x and no pin is needed.
+> `spacy-transformers` itself does not pin torch.
 
 Then set `model: "en_core_web_trf"` in `config.yaml` and uncomment the `presidio` backend and NER entities.
 
