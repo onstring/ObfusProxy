@@ -6,8 +6,8 @@ from .base import Detector, Entity, resolve_overlaps
 # hyphens / apostrophes, no digits or symbols.  This cuts single-word technical
 # terms ("Bug", "Lint", "HTTPS") and code fragments ("cubic-bezier(0.16") while
 # keeping "Sarah Chen", "Marcus Webb", "Mary-Jane Watson".
-# NOTE: Title-Case two-word headings ("Git Workflow") are indistinguishable from
-# names at the token level with en_core_web_sm — that's a model limitation.
+# NOTE: Title-Case two-word headings ("Git Workflow") are sometimes flagged by
+# the model — that's a known NER limitation, mitigated by this filter.
 _PERSON_RE = re.compile(r"^[A-Za-z][a-zA-Z'\-]*(?:\s[A-Za-z][a-zA-Z'\-]*)+$")
 
 
@@ -22,14 +22,14 @@ class PresidioDetector(Detector):
     Handles unstructured entities (PERSON, LOCATION, PHONE_NUMBER, CREDIT_CARD, etc.)
     that regex cannot reliably detect. Requires:
         uv pip install "presidio-analyzer>=2.2.0"
-        python -m spacy download en_core_web_sm
+        python -m spacy download en_core_web_lg
     """
 
     def __init__(
         self,
         enabled_types: list[str] | None = None,
         whitelist: frozenset[str] | None = None,
-        model: str = "en_core_web_sm",
+        model: str = "en_core_web_lg",
     ) -> None:
         from presidio_analyzer import AnalyzerEngine
         from presidio_analyzer.nlp_engine import NlpEngineProvider

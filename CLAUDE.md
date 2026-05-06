@@ -67,7 +67,7 @@ privacy:
   backends:
     - type: "regex"
     - type: "presidio"
-      model: "en_core_web_trf"   # transformer model; recommended for DevOps text
+      model: "en_core_web_lg"   # static-vector model; recommended default
   entities:
     - EMAIL_ADDRESS
     - IP_ADDRESS
@@ -84,22 +84,19 @@ privacy:
 **Install Presidio (optional):**
 ```bash
 uv pip install "presidio-analyzer>=2.2.0"
-# Transformer model (recommended — far fewer false positives on technical/markdown text):
-uv pip install "spacy[transformers]"
-# Intel macOS only — see "Platform note" below:
-uv pip install "numpy<2"
-python -m spacy download en_core_web_trf
-
-# Lightweight alternative (more false positives on code/markdown):
-# python -m spacy download en_core_web_sm
+python -m spacy download en_core_web_lg
 ```
 
-> **Platform note (Intel macOS only):** `spacy-transformers` itself only requires `torch>=1.8.0`
-> with no upper bound. The real constraint is that **PyTorch dropped Intel macOS wheels after 2.2.2**.
-> On `x86_64` Macs `uv` resolves to torch 2.2.2, which was compiled against the NumPy 1.x C API and
-> crashes at import with `_ARRAY_API not found` if NumPy 2.x is installed — hence the `numpy<2` pin.
-> On Apple Silicon, Linux, and Windows, torch 2.5+ ships with NumPy 2.x compatibility and the pin
-> is unnecessary. If you run the proxy in Docker on Linux you can drop the `numpy<2` pin entirely.
+That's it — no torch, no transformers, no NumPy pin. `en_core_web_lg` is a 560 MB static-vector
+model that gives good NER quality with ~10–50 ms per-request latency. Combined with the proxy's
+`_is_plausible_person` filter, false positives on technical/markdown text are well-controlled.
+
+**Model alternatives:**
+- `en_core_web_sm` (12 MB) — far more false positives on code/markdown; only useful if disk is constrained.
+- `en_core_web_trf` (440 MB) — transformer-backed, marginally better NER quality, but pulls in
+  `torch` + `transformers` (~2.5 GB of dependencies). On Intel macOS it additionally requires
+  `numpy<2` because PyTorch dropped Intel-Mac wheels after 2.2.2 and that build was compiled
+  against the NumPy 1.x C API. Not worth the complexity for the quality gain.
 
 ### Whitelist
 

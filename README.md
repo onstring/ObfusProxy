@@ -54,7 +54,7 @@ privacy:
   backends:
     - type: "regex"           # Always on — structured PII
     # - type: "presidio"      # Optional — NER (names, phones, credit cards)
-    #   model: "en_core_web_trf"   # transformer model; recommended
+    #   model: "en_core_web_lg"   # static-vector model; recommended default
   entities:
     - EMAIL_ADDRESS
     - IP_ADDRESS
@@ -89,23 +89,19 @@ Presidio uses spaCy for named entity recognition. Install separately:
 
 ```bash
 uv pip install "presidio-analyzer>=2.2.0"
-
-# Transformer model — recommended; far fewer false positives on code/markdown text
-uv pip install "spacy[transformers]"
-# Intel macOS only (see platform note below):
-uv pip install "numpy<2"
-python -m spacy download en_core_web_trf
-
-# Lightweight fallback (more false positives but no extra dependencies):
-# python -m spacy download en_core_web_sm
+python -m spacy download en_core_web_lg
 ```
 
-> **Platform note:** The `numpy<2` pin is **only needed on Intel macOS**. PyTorch dropped Intel-Mac
-> wheels after 2.2.2, and torch 2.2.2 was compiled against the NumPy 1.x C API. On Apple Silicon,
-> Linux, and Windows, modern torch (2.5+) installs cleanly with NumPy 2.x and no pin is needed.
-> `spacy-transformers` itself does not pin torch.
+`en_core_web_lg` (560 MB) is the recommended default — pure spaCy, no torch dependency, good NER
+quality, and ~10–50 ms per-request latency.
 
-Then set `model: "en_core_web_trf"` in `config.yaml` and uncomment the `presidio` backend and NER entities.
+Then uncomment the `presidio` backend and NER entities in `config.yaml`.
+
+**Model alternatives:**
+- `en_core_web_sm` (12 MB) — many more false positives on code/markdown text; only useful if disk-constrained.
+- `en_core_web_trf` (440 MB) — transformer-backed, slightly higher quality but pulls in `torch` +
+  `transformers` (~2.5 GB). On Intel macOS it additionally requires `numpy<2` because PyTorch
+  dropped Intel-Mac wheels after 2.2.2.
 
 ## Entity Types Detected
 

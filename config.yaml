@@ -7,9 +7,9 @@ privacy:
   backends:
     - type: "regex"
     # Uncomment to enable NER (names, addresses, phone numbers, credit cards).
-    # Requires: uv pip install "presidio-analyzer>=2.2.0" && python -m spacy download en_core_web_sm
+    # Requires: uv pip install "presidio-analyzer>=2.2.0" && python -m spacy download en_core_web_lg
     - type: "presidio"
-      model: "en_core_web_trf"
+      model: "en_core_web_lg"
   entities:
     # Structured PII — handled by regex
     - EMAIL_ADDRESS
