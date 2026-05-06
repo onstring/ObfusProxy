@@ -111,8 +111,8 @@ Then uncomment the `presidio` backend and NER entities in `config.yaml`.
 | `IP_ADDRESS` | regex | `8.8.8.8` | Loopback, RFC 1918, RFC-DOC ranges, configured ip_ranges |
 | `CIDR` | regex | `203.0.113.0/24` | RFC 1918, RFC-DOC ranges, configured ip_ranges |
 | `DOMAIN` | regex | `db.corp.internal` | Configurable domains list |
-| `API_KEY` | regex | `sk-abc123...`, `Bearer ABC...` | — |
-| `SECRET` | regex | DSN URLs, env-var assignments, PEM keys | — |
+| `API_KEY` | regex | `sk-...`, `Bearer ...`, AWS `AKIA...`, Stripe `sk_live_...`, GitHub `ghp_...`, GitLab `glpat-...`, Slack `xox[bp]-...`, Vault `hvs....`, JWT `eyJ...` | — |
+| `SECRET` | regex | DSN URLs, PEM keys, env-var assignments (`AWS_*`, `GITHUB_TOKEN`, `STRIPE_*`, `VAULT_*`, `REDIS_URL`, `MONGODB_URI`, generic `PASSWORD`/`SECRET`) | — |
 | `AWS_ARN` | regex | `arn:aws:iam::123456789012:role/DevRole` | — |
 | `PERSON` | presidio | `John Smith` | — |
 | `PHONE_NUMBER` | presidio | `+1-555-867-5309` | — |

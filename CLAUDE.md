@@ -309,8 +309,8 @@ The factory builds the detector from `config.yaml`:
 | `IP_ADDRESS` | regex | `10.0.0.1` |
 | `CIDR` | regex | `10.0.0.0/8` |
 | `DOMAIN` | regex | `db.corp.internal`, `redis.svc.cluster.local` |
-| `API_KEY` | regex | `Bearer ABC...`, `sk-abc123...`, long hex |
-| `SECRET` | regex | DSN URLs, env-var assignments, PEM keys |
+| `API_KEY` | regex | `Bearer ABC...`, `sk-...`, AWS `AKIA...`, Stripe `sk_live_...`, GitHub `ghp_...`, GitLab `glpat-...`, Slack `xox[bp]-...`, npm `npm_...`, SendGrid `SG.x.y`, Twilio `AC...`, Google `AIza...`, Vault `hvs....` / `s....`, JWT `eyJ...`, long hex |
+| `SECRET` | regex | DSN URLs, PEM keys, env-var assignments for `AWS_*`, `GITHUB_TOKEN`, `STRIPE_*`, `DATADOG_*`, `PAGERDUTY_*`, `VAULT_*`, `REDIS_URL`, `MONGODB_URI`, plus generic `PASSWORD`/`SECRET`/`API_SECRET` etc. |
 | `AWS_ARN` | regex | `arn:aws:iam::123456789012:role/DevRole` |
 | `PORT` | regex | `:8080` |
 | `PERSON` | presidio | `John Smith` |

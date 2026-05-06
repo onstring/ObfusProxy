@@ -152,6 +152,84 @@ class TestApiKey:
         assert "API_KEY" not in types("Id: abcdef123456")
 
 
+class TestServicePrefixedTokens:
+    """Layer 1 secret detection: service-specific prefix patterns (gitleaks-style).
+
+    Test fixtures are constructed via string concatenation (e.g. "sk_" + "live_...")
+    so the source file's raw bytes never contain a contiguous service-prefix
+    pattern. This prevents GitHub's push-protection scanner from flagging the
+    test data as real leaked secrets while keeping the runtime values intact.
+    """
+
+    def test_aws_access_key(self):
+        token = "AKIA" + "IOSFODNN7EXAMPLE"
+        assert token in texts(f"Use {token} for access.")
+
+    def test_aws_sts_key(self):
+        token = "ASIA" + "IOSFODNN7EXAMPLE"
+        assert token in texts(f"Temp creds: {token} here.")
+
+    def test_stripe_live_key(self):
+        token = "sk_" + "live_51Hb3kLJZ8qKO2aBc1234EXAMPLEKEY"
+        assert token in texts(f"Stripe key {token} prod")
+
+    def test_stripe_test_key(self):
+        token = "sk_" + "test_51Hb3kLJZ8qKO2aBc1234EXAMPLEKEY"
+        assert token in texts(f"Test mode {token} ok")
+
+    def test_github_pat(self):
+        token = "ghp" + "_aBcDeFgHiJkLmNoPqRsTuVwXyZ1234567890"
+        assert token in texts(f"GitHub: {token} fetched")
+
+    def test_github_oauth(self):
+        token = "gho" + "_aBcDeFgHiJkLmNoPqRsTuVwXyZ1234567890"
+        assert token in texts(f"OAuth {token} returned")
+
+    def test_gitlab_pat(self):
+        token = "glpat" + "-aBcDeFgHiJkLmNoPq1234"
+        assert token in texts(f"GitLab token {token} ok")
+
+    def test_slack_bot_token(self):
+        token = "xoxb" + "-1234567890-abcdef1234567890"
+        assert token in texts(f"Slack bot {token} authorized")
+
+    def test_npm_token(self):
+        token = "npm" + "_aBcDeFgHiJkLmNoPqRsTuVwXyZ1234567890"
+        assert token in texts(f"npm publish with {token} done")
+
+    def test_sendgrid_key(self):
+        # Real SendGrid keys: SG. + 22 chars + . + 43 chars = 69 chars total
+        token = "SG" + "." + "aBcDeFgHiJkLmNoPqRsTuV" + "." + "aBcDeFgHiJkLmNoPqRsTuVwXyZ1234567890_-aBcDe"
+        result = texts(f"SendGrid {token} sent")
+        assert any(t.startswith("SG.") for t in result)
+
+    def test_twilio_account_sid(self):
+        token = "AC" + "0123456789abcdef0123456789abcdef"
+        assert token in texts(f"Twilio SID {token} active")
+
+    def test_google_api_key(self):
+        # Real Google API keys are AIza + 35 chars = 39 chars total
+        token = "AIza" + "SyA-aBcDeFgHiJkLmNoPqRsTuVwXyZ12345"
+        assert token in texts(f"Maps key {token} configured")
+
+    def test_vault_new_token(self):
+        token = "hvs" + ".CAESIB1234567890ABCDEFGHIJ"
+        assert token in texts(f"Vault auth {token} returned")
+
+    def test_vault_legacy_token(self):
+        token = "s" + ".XjqP9kLmNvWrTzYaBcDeFgHi"
+        assert token in texts(f"Token: {token} expires soon")
+
+    def test_jwt(self):
+        token = "eyJ" + "hbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+        assert token in texts(f"JWT {token} validated")
+
+    def test_no_false_positive_random_text(self):
+        # Plain English with no token shape should detect nothing as API_KEY
+        result = types("AKIA is a prefix but on its own it's just letters.")
+        assert "API_KEY" not in result
+
+
 # ---------------------------------------------------------------------------
 # SECRET
 # ---------------------------------------------------------------------------
@@ -172,6 +250,56 @@ class TestSecret:
     def test_pem_key(self):
         pem = "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBg==\n-----END PRIVATE KEY-----"
         assert "SECRET" in types(pem)
+
+
+class TestEnvVarSecretNames:
+    """Layer 2 secret detection: known dangerous env-var names with their values.
+
+    AWS-shaped values are split via concatenation to avoid GitHub push-protection
+    false positives on synthetic test fixtures.
+    """
+
+    def test_aws_access_key_id(self):
+        val = "AKIA" + "IOSFODNN7EXAMPLE"
+        assert "SECRET" in types(f"AWS_ACCESS_KEY_ID={val}")
+
+    def test_aws_secret_access_key(self):
+        # Value alone has no recognizable prefix — the env var name is the trigger
+        val = "wJalr" + "XUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+        assert "SECRET" in types(f"AWS_SECRET_ACCESS_KEY={val}")
+
+    def test_aws_session_token(self):
+        val = "AQo" + "EXAMPLEH4aoAH0gNCAPyJxz4BlCFFxWNE1OPTgk5TthT"
+        assert "SECRET" in types(f"AWS_SESSION_TOKEN={val}")
+
+    def test_github_token_env(self):
+        assert "SECRET" in types("GITHUB_TOKEN=somevaluewithoutprefix12345")
+
+    def test_stripe_webhook_secret(self):
+        assert "SECRET" in types("STRIPE_WEBHOOK_SECRET=whsec_aBcDeFgHiJkLmNoPqRsTuV")
+
+    def test_pagerduty_api_key(self):
+        assert "SECRET" in types("PAGERDUTY_API_KEY=pdU+abc123XYZ==")
+
+    def test_vault_token_env(self):
+        assert "SECRET" in types("VAULT_TOKEN=randomopaquetoken123")
+
+    def test_datadog_api_key(self):
+        assert "SECRET" in types("DD_API_KEY=abc123def456")
+
+    def test_redis_url_with_password(self):
+        assert "SECRET" in types("REDIS_URL=redis://:p@ssw0rd@cache.example.com:6379")
+
+    def test_mongo_uri(self):
+        assert "SECRET" in types("MONGODB_URI=mongodb+srv://user:pass@cluster.mongodb.net")
+
+    def test_colon_assignment_yaml_style(self):
+        # Some configs use ":" instead of "=" (YAML/properties)
+        assert "SECRET" in types("VAULT_TOKEN: hvs.opaquevalue")
+
+    def test_case_insensitive(self):
+        val = "AKIA" + "IOSFODNN7EXAMPLE"
+        assert "SECRET" in types(f"aws_access_key_id={val}")
 
 
 # ---------------------------------------------------------------------------

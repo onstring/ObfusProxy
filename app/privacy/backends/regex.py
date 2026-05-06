@@ -37,7 +37,28 @@ _PATTERNS = [
     _Pattern(
         "SECRET",
         re.compile(
-            r"(?:DATABASE_URL|CONN_STR|CONNSTRING|CONNECTION_STRING|TRANSPORT_URL|PRIVATE_KEY|SECRET_KEY|PASSWORD|SECRET|API_SECRET|DB_PASSWORD|CELERY_BROKER_URL)\s*=\s*[^\s]+",
+            r"(?:"
+            # Generic credentials
+            r"DATABASE_URL|CONN_STR|CONNSTRING|CONNECTION_STRING|TRANSPORT_URL|"
+            r"PRIVATE_KEY|SECRET_KEY|PASSWORD|SECRET|API_SECRET|DB_PASSWORD|CELERY_BROKER_URL|"
+            # Cloud provider credentials
+            r"AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN|"
+            r"GCP_SERVICE_ACCOUNT_KEY|GOOGLE_APPLICATION_CREDENTIALS|"
+            r"AZURE_CLIENT_SECRET|AZURE_TENANT_ID|"
+            # SaaS API tokens
+            r"GITHUB_TOKEN|GH_TOKEN|GITHUB_PAT|"
+            r"GITLAB_TOKEN|GITLAB_PAT|"
+            r"STRIPE_SECRET_KEY|STRIPE_API_KEY|STRIPE_WEBHOOK_SECRET|"
+            r"DATADOG_API_KEY|DD_API_KEY|DATADOG_APP_KEY|"
+            r"PAGERDUTY_API_KEY|PAGERDUTY_TOKEN|"
+            r"SENDGRID_API_KEY|MAILGUN_API_KEY|"
+            r"TWILIO_AUTH_TOKEN|TWILIO_ACCOUNT_SID|"
+            r"SLACK_TOKEN|SLACK_WEBHOOK_URL|SLACK_SIGNING_SECRET|"
+            # Infra / secrets management
+            r"VAULT_TOKEN|VAULT_ROLE_SECRET_ID|"
+            # Datastore URLs (typically embed credentials)
+            r"REDIS_URL|MONGO_URL|MONGODB_URI|RABBITMQ_URL|KAFKA_SASL_PASSWORD"
+            r")\s*[=:]\s*\S+",
             re.IGNORECASE,
         ),
     ),
@@ -72,6 +93,64 @@ _PATTERNS = [
     _Pattern(
         "API_KEY",
         re.compile(r"sk-[A-Za-z0-9\-]{20,}"),
+    ),
+    # Service-specific token prefixes — patterns ported from gitleaks rules.
+    # Near-zero false-positive rate: each prefix uniquely identifies the issuer.
+    _Pattern(
+        "API_KEY",
+        re.compile(r"\bAKIA[0-9A-Z]{16}\b"),  # AWS access key
+    ),
+    _Pattern(
+        "API_KEY",
+        re.compile(r"\bASIA[0-9A-Z]{16}\b"),  # AWS STS temporary access key
+    ),
+    _Pattern(
+        "API_KEY",
+        re.compile(r"\bsk_(?:live|test)_[0-9a-zA-Z]{24,}\b"),  # Stripe secret key
+    ),
+    _Pattern(
+        "API_KEY",
+        re.compile(r"\brk_(?:live|test)_[0-9a-zA-Z]{24,}\b"),  # Stripe restricted key
+    ),
+    _Pattern(
+        "API_KEY",
+        re.compile(r"\bgh[pousr]_[A-Za-z0-9]{36,}\b"),  # GitHub PAT / OAuth / user / server / refresh
+    ),
+    _Pattern(
+        "API_KEY",
+        re.compile(r"\bglpat-[0-9a-zA-Z\-_]{20,}\b"),  # GitLab personal access token
+    ),
+    _Pattern(
+        "API_KEY",
+        re.compile(r"\bxox[bpaors]-[0-9]{10,}-[0-9a-zA-Z\-]+"),  # Slack tokens
+    ),
+    _Pattern(
+        "API_KEY",
+        re.compile(r"\bnpm_[A-Za-z0-9]{36,}\b"),  # npm token
+    ),
+    _Pattern(
+        "API_KEY",
+        re.compile(r"\bSG\.[A-Za-z0-9_\-]{22}\.[A-Za-z0-9_\-]{43}\b"),  # SendGrid API key
+    ),
+    _Pattern(
+        "API_KEY",
+        re.compile(r"\bAC[a-f0-9]{32}\b"),  # Twilio Account SID
+    ),
+    _Pattern(
+        "API_KEY",
+        re.compile(r"\bAIza[0-9A-Za-z\-_]{35}\b"),  # Google API key
+    ),
+    _Pattern(
+        "API_KEY",
+        re.compile(r"\bhvs\.[A-Za-z0-9_\-]{20,}\b"),  # HashiCorp Vault token (new format)
+    ),
+    _Pattern(
+        "API_KEY",
+        re.compile(r"(?<![A-Za-z0-9])s\.[A-Za-z0-9]{24}(?![A-Za-z0-9])"),  # Vault legacy service token
+    ),
+    _Pattern(
+        "API_KEY",
+        re.compile(r"\beyJ[A-Za-z0-9_=\-]+\.eyJ[A-Za-z0-9_=\-]+\.[A-Za-z0-9_.+/=\-]+"),  # JWT
     ),
     _Pattern(
         "API_KEY",
