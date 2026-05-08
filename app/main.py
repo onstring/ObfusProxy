@@ -18,8 +18,11 @@ from app.router import ProviderRouter
 _pipeline: Pipeline | None = None
 
 _log_level = os.environ.get("OBFUSPROXY_LOG_LEVEL", "INFO").upper()
+# Root stays at INFO so uvicorn's startup banner and request access lines remain
+# visible, but DEBUG/TRACE noise from third-party libs (uvicorn, fastapi, spacy,
+# litellm, transformers, ...) is filtered out. Only `app.*` honors the user level.
 logging.basicConfig(
-    level=_log_level,
+    level="INFO",
     format="%(asctime)s %(levelname)-8s %(name)s  %(message)s",
     datefmt="%H:%M:%S",
 )
