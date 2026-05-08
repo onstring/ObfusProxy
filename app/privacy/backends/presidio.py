@@ -16,6 +16,15 @@ def _is_plausible_person(text: str) -> bool:
     return 5 <= len(t) <= 40 and bool(_PERSON_RE.match(t))
 
 
+# spaCy NER labels that aren't PII — declared up front so Presidio doesn't emit
+# "Entity X is not mapped to a Presidio entity, but keeping anyway" on every call.
+_SPACY_NON_PII_LABELS = [
+    "CARDINAL", "ORDINAL", "QUANTITY", "PERCENT", "MONEY",
+    "DATE", "TIME", "PRODUCT", "EVENT", "WORK_OF_ART",
+    "LAW", "LANGUAGE", "FAC", "NORP", "ORG",
+]
+
+
 class PresidioDetector(Detector):
     """PII/NER detector backed by Microsoft Presidio + spaCy.
 
@@ -37,10 +46,22 @@ class PresidioDetector(Detector):
         nlp_config = {
             "nlp_engine_name": "spacy",
             "models": [{"lang_code": "en", "model_name": model}],
+            "ner_model_configuration": {
+                "labels_to_ignore": _SPACY_NON_PII_LABELS,
+            },
         }
         nlp_engine = NlpEngineProvider(nlp_configuration=nlp_config).create_engine()
         self._analyzer = AnalyzerEngine(nlp_engine=nlp_engine)
-        self._enabled = enabled_types
+
+        # Filter requested entities to those Presidio actually has recognizers for.
+        # The global entities list mixes regex-only types (CIDR, DOMAIN, API_KEY, ...)
+        # with NER types — passing the regex-only ones to Presidio triggers a
+        # "doesn't have the corresponding recognizer" warning per request.
+        if enabled_types:
+            supported = set(self._analyzer.get_supported_entities())
+            self._enabled = [t for t in enabled_types if t in supported] or None
+        else:
+            self._enabled = None
         self._whitelist = whitelist or frozenset()
 
     @property

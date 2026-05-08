@@ -29,6 +29,11 @@ logging.basicConfig(
 logging.getLogger("app").setLevel(_log_level)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
+# Presidio emits one-time init warnings about non-English (es/it/pl) recognizers
+# that we never use, plus per-request "no recognizer / not mapped" warnings that
+# we already suppress structurally inside PresidioDetector. Real Presidio errors
+# surface as exceptions, not warning logs — safe to clamp.
+logging.getLogger("presidio-analyzer").setLevel(logging.ERROR)
 
 
 @asynccontextmanager
