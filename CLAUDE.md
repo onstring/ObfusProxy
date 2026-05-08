@@ -131,19 +131,23 @@ There is no provider or model config. The proxy is fully transparent:
 
 ## Logging
 
-Control verbosity with `OBFUSPROXY_LOG_LEVEL` (default: `INFO`):
+Control verbosity with `OBFUSPROXY_LOG_LEVEL` (default: `INFO`). Three tiers:
 
 | Level | Shows |
 |---|---|
 | `INFO` | Entity count per obfuscated text block |
-| `DEBUG` | Entity type, original value, placeholder, message role/index — plus the full obfuscated prompt sent to the LLM and the raw response received before de-obfuscation |
+| `DEBUG` | The obfuscation mapping table — entity type, original value, placeholder, message role/index. Clean output focused on what was redacted to what. |
+| `TRACE` | Everything in `DEBUG` plus the full obfuscated prompt sent to the LLM and the raw response received before de-obfuscation. Verbose; use when you need to inspect actual payloads. |
 
 ```bash
 # Counts only (default)
 uvicorn app.main:app --host 127.0.0.1 --port 8080 --workers 1
 
-# Entity details + full payload visibility
+# Mapping table only — recommended when you want to see what's being redacted
 OBFUSPROXY_LOG_LEVEL=DEBUG uvicorn app.main:app --host 127.0.0.1 --port 8080 --workers 1
+
+# Mapping table + full payloads (sent prompts and raw responses)
+OBFUSPROXY_LOG_LEVEL=TRACE uvicorn app.main:app --host 127.0.0.1 --port 8080 --workers 1
 ```
 
 Sample DEBUG output:
@@ -452,6 +456,6 @@ export ANTHROPIC_API_KEY=sk-ant-...
 export OPENAI_API_KEY=sk-...
 export GROQ_API_KEY=gsk-...
 
-# Proxy log verbosity: INFO (default) | DEBUG
+# Proxy log verbosity: INFO (default) | DEBUG | TRACE
 export OBFUSPROXY_LOG_LEVEL=DEBUG
 ```
