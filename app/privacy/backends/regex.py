@@ -164,7 +164,21 @@ _PATTERNS = [
     _Pattern(
         "DOMAIN",
         re.compile(
-            r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+(?:internal|local|corp|svc|cluster\.local|dev|staging|qa)\b",
+            r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+(?:"
+            # Internal / infrastructure pseudo-TLDs
+            r"internal|local|corp|svc|cluster\.local|consul|nomad|"
+            r"dev|staging|qa|test|prod|"
+            # Generic TLDs
+            r"com|net|org|edu|gov|mil|int|"
+            # Tech / cloud new gTLDs
+            r"io|co|ai|app|cloud|tech|"
+            # Country-code TLDs (omitting short ones that double as English words:
+            # in, is, it, at, be, no, me, to, us, as, do)
+            r"au|nz|uk|ca|jp|cn|de|fr|nl|se|dk|fi|ch|ru|br|"
+            r"sg|hk|tw|kr|pl|cz|es|pt|ie|za|ar|mx|cl|"
+            # Other common TLDs
+            r"info|biz"
+            r")\b",
             re.IGNORECASE,
         ),
     ),

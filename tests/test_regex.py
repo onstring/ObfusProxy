@@ -128,9 +128,17 @@ class TestDomain:
         hit_texts = texts("Call api.corp.internal endpoint.", d=d)
         assert "api.corp.internal" not in hit_texts
 
-    def test_public_tld_not_detected(self):
-        # github.com should not match (no internal TLD)
-        assert "DOMAIN" not in types("Visit github.com for code.")
+    def test_public_tld_detected(self):
+        assert "DOMAIN" in types("See docs at docs.python.org for reference.")
+
+    def test_country_code_tld_detected(self):
+        assert "DOMAIN" in types("Server rccomdc1rh43-10.yez.mon.edu.au is unreachable.")
+
+    def test_aws_hostname_detected(self):
+        assert "DOMAIN" in types("ec2-54-12-34-56.us-east-1.compute.amazonaws.com failed.")
+
+    def test_two_label_com_detected(self):
+        assert "DOMAIN" in types("Connect to db.corp.example.com to check.")
 
 
 # ---------------------------------------------------------------------------
