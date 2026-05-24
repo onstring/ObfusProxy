@@ -101,6 +101,51 @@ class TestObfuscateMessages:
 
 
 @pytest.mark.asyncio
+class TestRedactOnly:
+    async def test_redact_only_entity_produces_redacted_placeholder(self):
+        from app.privacy.backends.base import Entity
+        from app.privacy.backends.base import Detector
+
+        class _RedactDetector(Detector):
+            @property
+            def name(self) -> str:
+                return "test"
+            def detect(self, text: str) -> list:
+                start = text.find("MYSECRET")
+                if start == -1:
+                    return []
+                return [Entity(type="MY_TYPE", start=start, end=start + 8, text="MYSECRET", redact_only=True)]
+
+        engine = PrivacyEngine(detector=_RedactDetector(), session_map=SessionMap())
+        result = await engine._obfuscate_text("value: MYSECRET here", SESSION)
+        assert result == "value: [REDACTED:MY_TYPE] here"
+
+    async def test_redact_only_not_in_session_map(self):
+        from app.privacy.backends.base import Entity, Detector
+
+        class _RedactDetector(Detector):
+            @property
+            def name(self) -> str:
+                return "test"
+            def detect(self, text: str) -> list:
+                start = text.find("MYSECRET")
+                if start == -1:
+                    return []
+                return [Entity(type="MY_TYPE", start=start, end=start + 8, text="MYSECRET", redact_only=True)]
+
+        sm = SessionMap()
+        engine = PrivacyEngine(detector=_RedactDetector(), session_map=sm)
+        await engine._obfuscate_text("value: MYSECRET here", SESSION)
+        mapping = await sm.get_map(SESSION)
+        assert not mapping, "redact_only entity must not be stored in session map"
+
+    async def test_redacted_placeholder_survives_deobfuscate(self):
+        engine = make_engine()
+        result = await engine.deobfuscate("[REDACTED:MY_TYPE]", SESSION)
+        assert result == "[REDACTED:MY_TYPE]"
+
+
+@pytest.mark.asyncio
 class TestDeobfuscate:
     async def test_restores_placeholder(self):
         engine = make_engine()

@@ -9,6 +9,7 @@ class Entity:
     start: int
     end: int
     text: str
+    redact_only: bool = False
 
     def __post_init__(self) -> None:
         if self.start >= self.end:

@@ -55,9 +55,12 @@ class PrivacyEngine:
             log.info("[obfuscate] session=%s entities=%d", session_id, len(entities))
 
         for entity in reversed(entities):
-            placeholder = await self._session_map.get_or_create(
-                session_id, entity.text, entity.type
-            )
+            if entity.redact_only:
+                placeholder = f"[REDACTED:{entity.type}]"
+            else:
+                placeholder = await self._session_map.get_or_create(
+                    session_id, entity.text, entity.type
+                )
             log.debug(
                 "[obfuscate]   %-20s %r -> %s",
                 entity.type,

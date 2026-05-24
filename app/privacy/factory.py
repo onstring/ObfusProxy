@@ -29,10 +29,19 @@ def create_detector(config: PrivacyConfig) -> Detector:
             detectors.append(
                 PresidioDetector(enabled_types=enabled, whitelist=exact, model=backend_cfg.model)
             )
+        elif backend_cfg.type == "detect_secrets":
+            try:
+                from app.privacy.backends.secrets_backend import DetectSecretsBackend
+            except ImportError as exc:
+                raise ImportError(
+                    "detect-secrets backend requires the detect-secrets package. "
+                    "Install it with: uv pip install 'detect-secrets>=1.5.0'"
+                ) from exc
+            detectors.append(DetectSecretsBackend(enabled_types=enabled))
         else:
             raise ValueError(
                 f"Unknown privacy backend: {backend_cfg.type!r}. "
-                f"Supported: ['regex', 'presidio']"
+                f"Supported: ['regex', 'presidio', 'detect_secrets']"
             )
 
     if len(detectors) == 1:

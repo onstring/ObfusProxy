@@ -4,7 +4,7 @@
 
 **ObfusProxy** is a local LLM privacy proxy for DevOps daily use. It sits between developer tools (Claude Code, curl, any OpenAI-SDK client) and cloud LLM providers, transparently obfuscating sensitive data in prompts and de-obfuscating responses.
 
-**Current stage:** Stage 2 — regex backend for structured PII + optional Presidio NER backend for unstructured entities (names, phone numbers, credit cards). Backends compose via `CompositeDetector`.
+**Current stage:** Stage 2 — regex backend for context-bearing DevOps PII + detect-secrets backend for secret-class entities (one-way redaction) + optional Presidio NER backend. Backends compose via `CompositeDetector`.
 
 ## Quick Start
 
@@ -48,7 +48,7 @@ The proxy intercepts all requests, obfuscates PII in `user` and `tool` messages,
 Edit `config.yaml` to control:
 
 - **Server host/port** — where the proxy listens
-- **Privacy backends** — `regex` (always on) and/or `presidio` (optional NER; requires extra install)
+- **Privacy backends** — `regex` (context-bearing PII), `detect_secrets` (secret redaction), and/or `presidio` (optional NER)
 - **Entity types to detect** — filters which types any backend may emit
 - **Whitelist** — structured into `loopback`, `ip_ranges` (CIDR), and `domains`
 
@@ -58,31 +58,27 @@ Model selection and provider routing are handled entirely by the client and Lite
 
 The `backends` list is ordered. When multiple backends are configured, a `CompositeDetector` wraps them all — results are merged and overlaps resolved (first-listed backend wins on ties).
 
-**Regex only (default):**
+**Default (regex + detect_secrets):**
 ```yaml
 privacy:
   backends:
-    - type: "regex"
+    - type: "regex"           # context-bearing: email, IP, CIDR, domain, port
+    - type: "detect_secrets"  # secrets: redacted one-way, not round-tripped
 ```
 
-**Regex + Presidio NER:**
+**Install detect-secrets (required for default config):**
+```bash
+uv pip install "detect-secrets>=1.5.0"
+```
+
+**With Presidio NER (optional, adds PERSON / PHONE_NUMBER / CREDIT_CARD):**
 ```yaml
 privacy:
   backends:
     - type: "regex"
+    - type: "detect_secrets"
     - type: "presidio"
-      model: "en_core_web_lg"   # static-vector model; recommended default
-  entities:
-    - EMAIL_ADDRESS
-    - IP_ADDRESS
-    - CIDR
-    - DOMAIN
-    - API_KEY
-    - SECRET
-    - AWS_ARN
-    - PERSON
-    - PHONE_NUMBER
-    - CREDIT_CARD
+      model: "en_core_web_lg"
 ```
 
 **Install Presidio (optional):**
@@ -174,12 +170,13 @@ Sample DEBUG output:
 pytest
 
 # Individual modules
-pytest tests/test_regex.py        -v  # RegexDetector — all entity types, safe ranges, whitelist
-pytest tests/test_session.py      -v  # SessionMap — idempotency, counters, concurrency
-pytest tests/test_engine.py       -v  # PrivacyEngine — round-trip, role filtering
-pytest tests/test_deobfuscator.py -v  # Streaming de-obfuscation, split-placeholder buffering
-pytest tests/test_composite.py    -v  # CompositeDetector — merging, overlap priority
-pytest tests/test_config.py       -v  # Config loading and Pydantic validation
+pytest tests/test_regex.py           -v  # RegexDetector — context-bearing entities, safe ranges, whitelist
+pytest tests/test_secrets_backend.py -v  # DetectSecretsBackend — service tokens, redact_only flag
+pytest tests/test_session.py         -v  # SessionMap — idempotency, counters, concurrency
+pytest tests/test_engine.py          -v  # PrivacyEngine — round-trip, redact-only path, role filtering
+pytest tests/test_deobfuscator.py    -v  # Streaming de-obfuscation, split-placeholder buffering
+pytest tests/test_composite.py       -v  # CompositeDetector — merging, overlap priority
+pytest tests/test_config.py          -v  # Config loading and Pydantic validation
 
 # With coverage
 pytest --cov=app --cov-report=term-missing
@@ -253,18 +250,20 @@ ObfusProxy/
 │       ├── factory.py     # Factory: config → Detector (or CompositeDetector)
 │       └── backends/
 │           ├── __init__.py
-│           ├── base.py        # Detector ABC, Entity dataclass, resolve_overlaps()
-│           ├── regex.py       # RegexDetector — structured PII (emails, IPs, keys, …)
-│           ├── composite.py   # CompositeDetector — wraps N backends, merges spans
-│           └── presidio.py    # PresidioDetector — NER via spaCy (optional)
+│           ├── base.py             # Detector ABC, Entity dataclass, resolve_overlaps()
+│           ├── regex.py            # RegexDetector — context-bearing PII (email, IP, domain…)
+│           ├── secrets_backend.py  # DetectSecretsBackend — secrets, redact-only
+│           ├── composite.py        # CompositeDetector — wraps N backends, merges spans
+│           └── presidio.py         # PresidioDetector — NER via spaCy (optional)
 ├── tests/
 │   ├── conftest.py            # Shared fixtures
-│   ├── test_regex.py          # RegexDetector — all entity types
-│   ├── test_session.py        # SessionMap
-│   ├── test_engine.py         # PrivacyEngine
-│   ├── test_deobfuscator.py   # Streaming de-obfuscation
-│   ├── test_composite.py      # CompositeDetector
-│   └── test_config.py         # Config loading and validation
+│   ├── test_regex.py              # RegexDetector — context-bearing entities
+│   ├── test_secrets_backend.py    # DetectSecretsBackend — service tokens, redact_only
+│   ├── test_session.py            # SessionMap
+│   ├── test_engine.py             # PrivacyEngine — round-trip + redact-only path
+│   ├── test_deobfuscator.py       # Streaming de-obfuscation
+│   ├── test_composite.py          # CompositeDetector
+│   └── test_config.py             # Config loading and validation
 ├── config.yaml            # Configuration
 ├── pyproject.toml         # Dependencies, build config
 └── CLAUDE.md              # This file
@@ -310,34 +309,61 @@ The factory builds the detector from `config.yaml`:
 
 ### Entity Types
 
-| Type | Backend | Examples |
-|---|---|---|
-| `EMAIL_ADDRESS` | regex | `dev@corp.internal` |
-| `IP_ADDRESS` | regex | `10.0.0.1` |
-| `CIDR` | regex | `10.0.0.0/8` |
-| `DOMAIN` | regex | `db.corp.internal`, `redis.svc.cluster.local` |
-| `API_KEY` | regex | `Bearer ABC...`, `sk-...`, AWS `AKIA...`, Stripe `sk_live_...`, GitHub `ghp_...`, GitLab `glpat-...`, Slack `xox[bp]-...`, npm `npm_...`, SendGrid `SG.x.y`, Twilio `AC...`, Google `AIza...`, Vault `hvs....` / `s....`, JWT `eyJ...`, long hex |
-| `SECRET` | regex | DSN URLs, PEM keys, env-var assignments for `AWS_*`, `GITHUB_TOKEN`, `STRIPE_*`, `DATADOG_*`, `PAGERDUTY_*`, `VAULT_*`, `REDIS_URL`, `MONGODB_URI`, plus generic `PASSWORD`/`SECRET`/`API_SECRET` etc. |
-| `AWS_ARN` | regex | `arn:aws:iam::123456789012:role/DevRole` |
-| `PORT` | regex | `:8080` |
-| `PERSON` | presidio | `John Smith` |
-| `PHONE_NUMBER` | presidio | `+1-555-867-5309` |
-| `CREDIT_CARD` | presidio | `4111 1111 1111 1111` |
-| `LOCATION` | presidio | `San Francisco, CA` |
+Two obfuscation modes exist:
+
+- **Reversible** — replaced with `[TYPE_N]` placeholder, restored on response (context preserved for the LLM)
+- **Redact-only** — replaced with `[REDACTED:TYPE]`, never stored in session map, never restored (secret value is gone)
+
+| Type | Backend | Mode | Examples |
+|---|---|---|---|
+| `EMAIL_ADDRESS` | regex | reversible | `dev@corp.internal` |
+| `IP_ADDRESS` | regex | reversible | `10.0.0.1` |
+| `CIDR` | regex | reversible | `10.0.0.0/8` |
+| `DOMAIN` | regex | reversible | `db.corp.internal`, `redis.svc.cluster.local` |
+| `PORT` | regex | reversible | `:8080` |
+| `AWS_KEY` | detect_secrets | redact | `AKIA...`, `ASIA...` |
+| `AZURE_KEY` | detect_secrets | redact | Azure storage keys |
+| `BASIC_AUTH` | detect_secrets | redact | password in `https://user:pass@host` URLs |
+| `DISCORD_TOKEN` | detect_secrets | redact | Discord bot tokens |
+| `GITHUB_TOKEN` | detect_secrets | redact | `ghp_...`, `gho_...`, `ghu_...` |
+| `GITLAB_TOKEN` | detect_secrets | redact | `glpat-...` |
+| `JWT` | detect_secrets | redact | `eyJ....eyJ....` |
+| `MAILCHIMP_KEY` | detect_secrets | redact | Mailchimp API keys |
+| `NPM_TOKEN` | detect_secrets | redact | `npm_...` |
+| `OPENAI_KEY` | detect_secrets | redact | OpenAI API keys |
+| `PRIVATE_KEY` | detect_secrets | redact | PEM key blocks (all types) |
+| `PYPI_TOKEN` | detect_secrets | redact | PyPI upload tokens |
+| `SENDGRID_KEY` | detect_secrets | redact | `SG.x.y` |
+| `SLACK_TOKEN` | detect_secrets | redact | `xoxb-...`, `xoxp-...` |
+| `SQUARE_TOKEN` | detect_secrets | redact | Square OAuth tokens |
+| `STRIPE_KEY` | detect_secrets | redact | `sk_live_...`, `sk_test_...`, `rk_...` |
+| `TELEGRAM_TOKEN` | detect_secrets | redact | Telegram bot tokens |
+| `TWILIO_KEY` | detect_secrets | redact | Twilio auth tokens |
+| `AWS_ARN` | detect_secrets | redact | `arn:aws:iam::123456789012:role/DevRole` |
+| `SECRET` | detect_secrets | redact | DSN URLs, env-var assignments (`DATABASE_URL=...`, `VAULT_TOKEN=...`), `Password=...` connection strings |
+| `PERSON` | presidio | reversible | `John Smith` |
+| `PHONE_NUMBER` | presidio | reversible | `+1-555-867-5309` |
+| `CREDIT_CARD` | presidio | reversible | `4111 1111 1111 1111` |
 
 **Not detected (not sensitive):** UUID, DOCKER_IMAGE, K8S_RESOURCE.
 
 **Note on PORT detection:** The PORT regex captures `:NNNN` syntax (e.g., `host:8080`). The `port N` word-form alternative is present in the pattern but its digits fall in a different capture group — only `:NNNN` style is currently emitted.
 
+**Design rationale for two modes:** Context-bearing entities (IPs, domains, emails) help the LLM reason about infrastructure topology — the LLM sees `[DOMAIN_0]` and the original is restored on response. Secrets don't have that property: the LLM never needs the real value, keeping it in the session map would prolong its lifetime in memory unnecessarily, and one-way redaction is safer by default.
+
 ### Placeholder Format
 
-Placeholders are named after their entity type for readability:
-
+**Context-bearing entities** — reversible, counter-scoped per session:
 ```
 [IP_ADDRESS_0]   [EMAIL_ADDRESS_1]   [DOMAIN_2]   [PORT_3]
 ```
-
 Counter is global per session (not per type), ensuring uniqueness. The same original value always maps to the same placeholder within a session.
+
+**Secret entities** — terminal, no session-map entry:
+```
+[REDACTED:GITHUB_TOKEN]   [REDACTED:AWS_KEY]   [REDACTED:SECRET]
+```
+The type suffix tells the LLM what kind of value was scrubbed without leaking the value itself — useful when diagnosing auth errors (`"the GITHUB_TOKEN in this call was redacted"`).
 
 ### Session Map
 
@@ -369,11 +395,17 @@ Handles split placeholders like `[DOMAIN_5]` arriving as `[DOMA` + `IN_5]` acros
 
 ## Development Workflow
 
-### Adding a New Entity Pattern
+### Adding a New Context-Bearing Entity (reversible)
 
 1. Edit `app/privacy/backends/regex.py` — add pattern to `_PATTERNS` list
 2. Add test case to `tests/test_regex.py`
-3. No other files change
+3. Add the entity type to the `entities` list in `config.yaml`
+
+### Adding a New Secret Pattern (redact-only)
+
+1. Edit `app/privacy/backends/secrets_backend.py` — add a `_CustomPattern` entry to `_CUSTOM_PATTERNS`
+2. Add test case to `tests/test_secrets_backend.py`
+3. Add the entity type to the `entities` list in `config.yaml`
 
 ### Adding a New Backend
 
@@ -385,7 +417,7 @@ Handles split placeholders like `[DOMAIN_5]` arriving as `[DOMA` + `IN_5]` acros
 ### Running Tests
 
 ```bash
-# All tests (100 tests, ~0.5s)
+# All tests (~130 tests, ~0.5s)
 pytest
 
 # Specific test file with verbose output
@@ -427,7 +459,7 @@ Or use a different port: `uvicorn app.main:app --host 127.0.0.1 --port 8081`
 
 ### "Unknown backend: ..."
 
-Check `config.yaml` — `privacy.backends[*].type` must be `"regex"` or `"presidio"`. For presidio, the package must be installed (`uv pip install "presidio-analyzer>=2.2.0"`).
+Check `config.yaml` — `privacy.backends[*].type` must be `"regex"`, `"detect_secrets"`, or `"presidio"`. For detect_secrets, install with `uv pip install "detect-secrets>=1.5.0"`. For presidio, install with `uv pip install "presidio-analyzer>=2.2.0"`.
 
 ### LiteLLM raises "model not found" or 400 error
 

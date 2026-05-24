@@ -5,26 +5,44 @@ server:
 privacy:
   enabled: true
   backends:
-    - type: "regex"
-    # Uncomment to enable NER (names, addresses, phone numbers, credit cards).
+    - type: "regex"         # context-bearing entities (email, IP, domain, CIDR, port)
+    - type: "detect_secrets"  # secret-class entities — redacted one-way, not round-tripped
+    # Uncomment to enable NER (names, phone numbers, credit cards).
     # Requires: uv pip install "presidio-analyzer>=2.2.0" && python -m spacy download en_core_web_lg
-    - type: "presidio"
-      model: "en_core_web_lg"
+    # - type: "presidio"
+    #   model: "en_core_web_lg"
   entities:
-    # Structured PII — handled by regex
+    # Context-bearing DevOps info — reversibly obfuscated (regex backend)
     - EMAIL_ADDRESS
     - IP_ADDRESS
     - CIDR
     - DOMAIN
-    - API_KEY
-    - SECRET
+    # PORT intentionally omitted — port numbers identify services, not secrets
+    # Secret-class — redacted one-way (detect_secrets backend)
     - AWS_ARN
-    # PORT intentionally omitted — port numbers identify services, not people or secrets
-    # Unstructured NER — handled by presidio (uncomment when presidio backend is enabled)
-    - PERSON
-    - PHONE_NUMBER
-    - CREDIT_CARD
-    #- LOCATION
+    - AWS_KEY
+    - AZURE_KEY
+    - BASIC_AUTH
+    - DISCORD_TOKEN
+    - GITHUB_TOKEN
+    - GITLAB_TOKEN
+    - JWT
+    - MAILCHIMP_KEY
+    - NPM_TOKEN
+    - OPENAI_KEY
+    - PRIVATE_KEY
+    - PYPI_TOKEN
+    - SECRET
+    - SENDGRID_KEY
+    - SLACK_TOKEN
+    - SQUARE_TOKEN
+    - STRIPE_KEY
+    - TELEGRAM_TOKEN
+    - TWILIO_KEY
+    # Unstructured NER — reversibly obfuscated (presidio backend, if enabled)
+    # - PERSON
+    # - PHONE_NUMBER
+    # - CREDIT_CARD
   whitelist:
     loopback:
       - "localhost"

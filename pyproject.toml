@@ -29,3 +29,6 @@ dev = [
 presidio = [
     "presidio-analyzer>=2.2.0",
 ]
+detect-secrets = [
+    "detect-secrets>=1.5.0",
+]
