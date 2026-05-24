@@ -19,6 +19,7 @@ class ProviderRouter:
         messages: list[dict],
         model: str | None = None,
         stream: bool = False,
+        api_key: str | None = None,
         **kwargs,
     ):
         if not model:
@@ -27,5 +28,6 @@ class ProviderRouter:
             model=model,
             messages=messages,
             stream=stream,
+            api_key=api_key,
             **kwargs,
         )

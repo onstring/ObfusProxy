@@ -53,7 +53,7 @@ class Pipeline:
 
         scrubbed = await self._engine.obfuscate(messages, session_id)
         log.log(TRACE, "[upstream-req] session=%s\n%s", session_id, _fmt_user_messages(scrubbed))
-        response = await self._router.call(scrubbed, model=model, stream=False)
+        response = await self._router.call(scrubbed, model=model, stream=False, api_key=self._extract_api_key(request))
 
         content = response.choices[0].message.content or ""
         log.log(TRACE, "[upstream-res] session=%s\n%s", session_id, content)
@@ -70,7 +70,7 @@ class Pipeline:
 
         scrubbed = await self._engine.obfuscate(messages, session_id)
         log.log(TRACE, "[upstream-req] session=%s\n%s", session_id, _fmt_user_messages(scrubbed))
-        stream = await self._router.call(scrubbed, model=model, stream=True)
+        stream = await self._router.call(scrubbed, model=model, stream=True, api_key=self._extract_api_key(request))
 
         session = StreamingDeobfuscatorSession(self._engine, session_id)
         accumulated = []
@@ -105,6 +105,7 @@ class Pipeline:
             messages=[{"role": "user", "content": obfuscated_prompt}],
             model=model,
             stream=False,
+            api_key=self._extract_api_key(request),
         )
 
         content = response.choices[0].text or ""
@@ -113,14 +114,79 @@ class Pipeline:
         response.choices[0].text = restored
         return response.model_dump()
 
+    def _extract_api_key(self, request: Request) -> str | None:
+        """Extract API key from Authorization: Bearer or x-api-key header, with env fallback.
+
+        Used for the LiteLLM (/v1/chat/completions) path, where LiteLLM only takes a
+        single api_key string. For Anthropic native (/v1/messages), prefer
+        _anthropic_forward_headers, which preserves the original auth scheme.
+        """
+        auth = request.headers.get("authorization", "")
+        if auth.lower().startswith("bearer "):
+            return auth[7:]
+        return request.headers.get("x-api-key") or os.environ.get("ANTHROPIC_API_KEY")
+
+    @staticmethod
+    def _redact(value: str) -> str:
+        """Show first 8 chars of a secret so we can identify it without leaking."""
+        if not value:
+            return "<empty>"
+        return f"{value[:8]}…(len={len(value)})"
+
     def _anthropic_forward_headers(self, request: Request) -> dict[str, str]:
+        """Build upstream headers preserving the client's original auth scheme.
+
+        Anthropic accepts two auth schemes and they are NOT interchangeable:
+          - API keys via `x-api-key: sk-ant-...`
+          - OAuth (Claude subscription) via `Authorization: Bearer <token>` plus
+            an `anthropic-beta: oauth-2025-04-20` style flag.
+        Forwarding an OAuth token as `x-api-key` (or vice versa) yields 401.
+        """
         headers = {
-            "x-api-key": os.environ.get("ANTHROPIC_API_KEY", ""),
             "anthropic-version": request.headers.get("anthropic-version", "2023-06-01"),
             "content-type": "application/json",
         }
-        if beta := request.headers.get("anthropic-beta"):
-            headers["anthropic-beta"] = beta
+
+        auth = request.headers.get("authorization", "")
+        client_api_key = request.headers.get("x-api-key")
+        env_key = os.environ.get("ANTHROPIC_API_KEY")
+        scheme = "none"
+
+        # Real Anthropic API keys start with `sk-ant-`. Clients pointed at a proxy
+        # often send placeholders like "your-proxy-key" — ignore those and fall
+        # back to env so the proxy-holds-the-key model still works.
+        client_key_looks_real = bool(client_api_key) and client_api_key.startswith("sk-ant-")
+
+        if auth.lower().startswith("bearer "):
+            # OAuth token (Claude subscription) — forward verbatim.
+            headers["authorization"] = auth
+            scheme = f"bearer({self._redact(auth[7:])})"
+        elif client_key_looks_real:
+            headers["x-api-key"] = client_api_key
+            scheme = f"x-api-key-client({self._redact(client_api_key)})"
+        elif env_key:
+            headers["x-api-key"] = env_key
+            placeholder_note = f" (ignored client placeholder {self._redact(client_api_key)})" if client_api_key else ""
+            scheme = f"x-api-key-env({self._redact(env_key)}){placeholder_note}"
+        elif client_api_key:
+            # No env key and client key doesn't look real — forward anyway; let
+            # Anthropic surface the 401 with its own diagnostic.
+            headers["x-api-key"] = client_api_key
+            scheme = f"x-api-key-client-suspect({self._redact(client_api_key)})"
+
+        # Forward anthropic-* metadata headers Claude Code includes (beta flags,
+        # dangerous-direct-browser-access, etc.) — required for OAuth.
+        for h in ("anthropic-beta", "anthropic-dangerous-direct-browser-access", "user-agent"):
+            if v := request.headers.get(h):
+                headers[h] = v
+
+        log.debug(
+            "[anthropic-auth] inbound: authorization=%s x-api-key=%s | outbound: scheme=%s headers=%s",
+            self._redact(auth) if auth else "<absent>",
+            self._redact(client_api_key) if client_api_key else "<absent>",
+            scheme,
+            sorted(headers.keys()),
+        )
         return headers
 
     async def _obfuscate_content(
@@ -234,7 +300,24 @@ class Pipeline:
                 headers=self._anthropic_forward_headers(request),
                 params=dict(request.query_params),
             ) as resp:
-                resp.raise_for_status()
+                if resp.status_code >= 400:
+                    body_bytes = await resp.aread()
+                    body_text = body_bytes.decode("utf-8", errors="replace")
+                    log.error(
+                        "[upstream-error] status=%s body=%s",
+                        resp.status_code,
+                        body_text[:500],
+                    )
+                    error_event = {
+                        "type": "error",
+                        "error": {
+                            "type": "upstream_error",
+                            "status": resp.status_code,
+                            "message": body_text,
+                        },
+                    }
+                    yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
+                    return
                 async for line in resp.aiter_lines():
                     if line.startswith("event:"):
                         yield f"{line}\n"
@@ -290,6 +373,7 @@ class Pipeline:
             messages=[{"role": "user", "content": obfuscated_prompt}],
             model=model,
             stream=True,
+            api_key=self._extract_api_key(request),
         )
 
         session = StreamingDeobfuscatorSession(self._engine, session_id)

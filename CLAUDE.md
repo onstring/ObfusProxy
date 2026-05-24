@@ -16,14 +16,15 @@ source .venv/bin/activate
 
 All commands below assume this environment is active.
 
-### 2. Set API Key and Run the Proxy
+### 2. Run the Proxy
 
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-...
 uvicorn app.main:app --host 127.0.0.1 --port 8080 --workers 1
 ```
 
-**Important:** Always use `--workers 1`. The session map is in-process memory; multiple workers cause silent de-obfuscation failures. `ANTHROPIC_API_KEY` must be set in the proxy's terminal — it is read at request time to forward to `api.anthropic.com`.
+**Important:** Always use `--workers 1`. The session map is in-process memory; multiple workers cause silent de-obfuscation failures.
+
+No API key is required in the proxy's environment — the proxy forwards whatever credentials the client sends (pass-through auth).
 
 ### 3. Point Claude Code at the Proxy
 
@@ -31,11 +32,14 @@ In a separate terminal:
 
 ```bash
 export ANTHROPIC_BASE_URL=http://localhost:8080
-export ANTHROPIC_API_KEY=sk-ant-proxy-dummy-key
+export ANTHROPIC_API_KEY=sk-ant-<your-real-key>   # or use: claude login
 claude
 ```
 
-> **Important:** Claude Code validates the key format before starting — it must begin with `sk-ant-`. Setting it to `unused` or any other non-matching string causes a "not logged in" error. The proxy ignores this value entirely; the real `ANTHROPIC_API_KEY` is read from the proxy's own terminal.
+The proxy extracts the `Authorization: Bearer` header (or `x-api-key`) from each request and forwards it to Anthropic unchanged. This means:
+- **API key users**: set your real `ANTHROPIC_API_KEY` on the client side
+- **Subscription users**: run `claude login` — the OAuth token is forwarded transparently
+- **Fallback**: if neither header is present, the proxy falls back to `ANTHROPIC_API_KEY` in its own environment (for shared/team setups where one key serves multiple clients)
 
 The proxy intercepts all requests, obfuscates PII in `user` and `tool` messages, forwards to the real API, and returns de-obfuscated responses.
 
@@ -219,14 +223,13 @@ curl -X DELETE http://localhost:8080/session/test-session-1
 ### Using with Claude Code
 
 ```bash
-# Terminal 1: Start proxy (real key — used to forward requests to Anthropic)
+# Terminal 1: Start proxy (no API key needed — client key is forwarded automatically)
 source .venv/bin/activate
-export ANTHROPIC_API_KEY=sk-ant-...
 uvicorn app.main:app --host 127.0.0.1 --port 8080 --workers 1
 
-# Terminal 2: Point Claude Code at proxy (dummy key — must match sk-ant- format)
+# Terminal 2: Point Claude Code at proxy (use real key or subscription)
 export ANTHROPIC_BASE_URL=http://localhost:8080
-export ANTHROPIC_API_KEY=sk-ant-proxy-dummy-key
+export ANTHROPIC_API_KEY=sk-ant-<your-real-key>   # or: claude login
 claude
 ```
 
@@ -449,10 +452,14 @@ pytest
 ## Environment Variables
 
 ```bash
-# Required for Anthropic path (Claude Code)
-export ANTHROPIC_API_KEY=sk-ant-...
+# Set on the CLIENT side (Claude Code / curl / SDK) — forwarded to Anthropic by the proxy
+export ANTHROPIC_API_KEY=sk-ant-...   # or use: claude login (subscription OAuth)
 
-# Optional: other providers via LiteLLM (OpenAI-compatible path)
+# Optional fallback on the PROXY side — used only if client sends no Authorization header
+# (useful for shared/team setups where one key serves multiple clients)
+# export ANTHROPIC_API_KEY=sk-ant-...
+
+# Optional: other providers via LiteLLM (OpenAI-compatible path) — set on client side
 export OPENAI_API_KEY=sk-...
 export GROQ_API_KEY=gsk-...
 
