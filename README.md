@@ -1,276 +1,181 @@
 # ObfusProxy
 
-A local LLM privacy proxy for DevOps. Transparently obfuscates sensitive data (PII, credentials, IPs, domains, API keys) in prompts sent to cloud LLMs and de-obfuscates responses before returning them to the client.
+A local LLM privacy proxy for DevOps. Sits between your tools (Claude Code, curl, any OpenAI-SDK client) and cloud LLM providers — transparently scrubbing sensitive data before it leaves your machine and restoring context in responses.
 
-## Features
+## How It Works
 
-- **Transparent privacy** — Prompts are obfuscated before leaving your machine; responses are restored invisibly
-- **Multi-backend detection** — Regex handles structured PII (emails, IPs, API keys, secrets); Presidio NER handles unstructured entities (names, phone numbers, credit cards). Backends compose via `CompositeDetector`
-- **Session persistence** — Same entity always gets the same placeholder within a session (coherent conversation)
-- **Streaming-safe** — Handles placeholders split across streaming chunks with lookahead buffering
-- **DevOps-focused** — Detects emails, IPs, CIDRs, domains, API keys, secrets, AWS ARNs, ports
-- **Structured whitelist** — Loopback addresses, RFC-private IP ranges, and well-known domains never get obfuscated
-- **Dual protocol** — Native Anthropic `/v1/messages` (for Claude Code) and OpenAI-compatible `/v1/chat/completions`
-- **Role-aware** — Only `user` and `tool` messages are obfuscated; assistant turns and system prompts pass through unchanged
+Two obfuscation modes run in parallel:
+
+| Mode | What | Placeholder | Round-trip |
+|---|---|---|---|
+| **Reversible** | Emails, IPs, CIDRs, domains, ports | `[DOMAIN_0]`, `[IP_ADDRESS_1]` | ✓ Restored in response |
+| **Redact-only** | API keys, tokens, passwords, secrets | `[REDACTED:GITHUB_TOKEN]` | ✗ Gone, never restored |
+
+Context-bearing entities are reversible so the LLM can reason about them (`[DOMAIN_0]` in a question becomes `db.corp.internal` in the answer). Secrets have no useful value to the LLM — they're dropped entirely.
 
 ## Quick Start
 
-### 1. Activate Virtual Environment
-
 ```bash
+# 1. Activate virtual environment
 source .venv/bin/activate
-```
 
-### 2. Set API Key and Run the Proxy
+# 2. Install secret detection (required for default config)
+uv pip install "detect-secrets>=1.5.0"
 
-```bash
+# 3. Start the proxy
 uvicorn app.main:app --host 127.0.0.1 --port 8080 --workers 1
-```
 
-### 3. Point Your Tool at the Proxy
-
-```bash
+# 4. Point Claude Code at the proxy (in a separate terminal)
 export ANTHROPIC_BASE_URL=http://localhost:8080
+export ANTHROPIC_API_KEY=sk-ant-<your-real-key>   # or: claude login
 claude
 ```
 
-> **Important:** Claude Code validates that the key matches the `sk-ant-` prefix format before starting. A value like `unused` will cause a "not logged in" error. Any `sk-ant-` prefixed string works — the proxy ignores it and uses the real key set in the proxy's terminal.
+No API key is required in the proxy's environment. The proxy forwards whatever credentials the client sends — real API key or OAuth subscription token.
 
-All prompts are automatically obfuscated. Responses are automatically de-obfuscated.
+## Detection Backends
+
+Three composable backends, ordered in `config.yaml`:
+
+| Backend | Type | Entities |
+|---|---|---|
+| `regex` | context-bearing PII | `EMAIL_ADDRESS`, `IP_ADDRESS`, `CIDR`, `DOMAIN`, `PORT` |
+| `detect_secrets` | secret-class, redact-only | API keys, tokens, DSN URLs, env-var credentials, PEM keys, and 20+ service-specific token formats (GitHub, AWS, Stripe, Slack, GitLab, JWT, npm, Twilio, OpenAI, …) |
+| `presidio` | unstructured NER (optional) | `PERSON`, `PHONE_NUMBER`, `CREDIT_CARD` |
+
+The `detect_secrets` backend uses [Yelp/detect-secrets](https://github.com/Yelp/detect-secrets) plugin patterns directly — no hand-maintained regex for secrets.
+
+### Install Optional Backends
+
+```bash
+# Secret detection (included in default config)
+uv pip install "detect-secrets>=1.5.0"
+
+# NER (names, phone numbers, credit cards)
+uv pip install "presidio-analyzer>=2.2.0"
+python -m spacy download en_core_web_lg
+```
 
 ## Configuration
 
-Edit `config.yaml`:
-
 ```yaml
-server:
-  host: "127.0.0.1"
-  port: 8080
-
 privacy:
-  enabled: true
   backends:
-    - type: "regex"           # Always on — structured PII
-    # - type: "presidio"      # Optional — NER (names, phones, credit cards)
-    #   model: "en_core_web_lg"   # static-vector model; recommended default
+    - type: "regex"           # context-bearing entities
+    - type: "detect_secrets"  # secrets — redacted one-way
+    # - type: "presidio"      # optional NER
+    #   model: "en_core_web_lg"
   entities:
     - EMAIL_ADDRESS
     - IP_ADDRESS
     - CIDR
     - DOMAIN
-    - API_KEY
-    - SECRET
-    - AWS_ARN
-    # PORT intentionally omitted — port numbers identify services, not secrets
-    # NER entities (presidio only — uncomment when presidio backend is enabled)
-    # - PERSON
-    # - PHONE_NUMBER
-    # - CREDIT_CARD
+    - GITHUB_TOKEN
+    - AWS_KEY
+    - STRIPE_KEY
+    - SECRET          # DSN URLs, env-var assignments, Password= strings
+    # ... see config.yaml for full list
   whitelist:
-    loopback:           # Exact strings never obfuscated
-      - "localhost"
-      - "127.0.0.1"
-      - "::1"
-      - "0.0.0.0"
-    ip_ranges: []       # RFC 1918 (10/8, 172.16/12, 192.168/16) are hardcoded safe
-                        # Add extra non-sensitive CIDR ranges here if needed
-    domains:            # Exact domain names never obfuscated
-      - "api.anthropic.com"
-      - "github.com"
+    loopback: ["localhost", "127.0.0.1", "::1", "0.0.0.0"]
+    ip_ranges: []     # RFC 1918 always safe; add extra CIDRs here
+    domains: ["api.anthropic.com", "github.com"]
 ```
-
-There is no provider or model configuration. Clients pass real model strings (`claude-haiku-4-5-20251001`, `gpt-4o`, `ollama/llama3`); LiteLLM auto-detects the upstream provider from the model name and reads API keys from environment variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, etc.).
-
-### Enabling Presidio NER (Optional)
-
-Presidio uses spaCy for named entity recognition. Install separately:
-
-```bash
-uv pip install "presidio-analyzer>=2.2.0"
-python -m spacy download en_core_web_lg
-```
-
-`en_core_web_lg` (560 MB) is the recommended default — pure spaCy, no torch dependency, good NER
-quality, and ~10–50 ms per-request latency.
-
-Then uncomment the `presidio` backend and NER entities in `config.yaml`.
-
-**Model alternatives:**
-- `en_core_web_sm` (12 MB) — many more false positives on code/markdown text; only useful if disk-constrained.
-- `en_core_web_trf` (440 MB) — transformer-backed, slightly higher quality but pulls in `torch` +
-  `transformers` (~2.5 GB). On Intel macOS it additionally requires `numpy<2` because PyTorch
-  dropped Intel-Mac wheels after 2.2.2.
-
-## Entity Types Detected
-
-| Type | Backend | Examples | Safe List |
-|---|---|---|---|
-| `EMAIL_ADDRESS` | regex | `dev@corp.internal` | Configurable whitelist |
-| `IP_ADDRESS` | regex | `8.8.8.8` | Loopback, RFC 1918, RFC-DOC ranges, configured ip_ranges |
-| `CIDR` | regex | `203.0.113.0/24` | RFC 1918, RFC-DOC ranges, configured ip_ranges |
-| `DOMAIN` | regex | `db.corp.internal` | Configurable domains list |
-| `API_KEY` | regex | `sk-...`, `Bearer ...`, AWS `AKIA...`, Stripe `sk_live_...`, GitHub `ghp_...`, GitLab `glpat-...`, Slack `xox[bp]-...`, Vault `hvs....`, JWT `eyJ...` | — |
-| `SECRET` | regex | DSN URLs, PEM keys, env-var assignments (`AWS_*`, `GITHUB_TOKEN`, `STRIPE_*`, `VAULT_*`, `REDIS_URL`, `MONGODB_URI`, generic `PASSWORD`/`SECRET`) | — |
-| `AWS_ARN` | regex | `arn:aws:iam::123456789012:role/DevRole` | — |
-| `PERSON` | presidio | `John Smith` | — |
-| `PHONE_NUMBER` | presidio | `+1-555-867-5309` | — |
-| `CREDIT_CARD` | presidio | `4111 1111 1111 1111` | — |
-
-**Not enabled by default:** PORT (`:8080` — identifies services, not secrets), LOCATION (high false-positive rate)
-
-**Not detected (not sensitive):** UUID, DOCKER_IMAGE, K8S_RESOURCE
-
-## What Gets Obfuscated
-
-Only messages that can carry user-supplied or tool-output content are obfuscated:
-
-| Message role | Obfuscated? |
-|---|---|
-| `user` | Yes |
-| `tool` / `tool_result` | Yes |
-| `assistant` | No — LLM-generated |
-| `system` | No — client-controlled instructions |
 
 ## Architecture
 
 ```
-Client
+Client (Claude Code / curl / SDK)
   │
-  ├─→ FastAPI gateway (mints/reads X-Session-Id)
+  │  Authorization: Bearer <token>  ← forwarded unchanged
   │
-  ├─→ PrivacyEngine.obfuscate (user/tool messages only)
-  │     CompositeDetector
-  │       ├─ RegexDetector    → structured PII spans
-  │       └─ PresidioDetector → NER spans (optional)
-  │     merge + resolve overlaps → [TYPE_N] placeholders
+  ▼
+FastAPI gateway  (X-Session-Id minted or read)
   │
-  ├─→ SessionMap (stores {[TYPE_N] → original} per session)
+  ├─ PrivacyEngine.obfuscate  (user + tool messages only)
+  │    CompositeDetector
+  │      ├─ RegexDetector         → [EMAIL_0], [DOMAIN_1], …  (reversible)
+  │      ├─ DetectSecretsBackend  → [REDACTED:GITHUB_TOKEN]   (one-way)
+  │      └─ PresidioDetector      → [PERSON_2]                (optional)
   │
-  ├─→ /v1/messages        → httpx → api.anthropic.com
-  │   /v1/chat/completions → litellm.acompletion (provider auto-detected from model name)
+  ├─ /v1/messages          → httpx         → api.anthropic.com
+  │  /v1/chat/completions  → litellm       → any provider
   │
-  ├─→ ResponseDeobfuscator (streaming-safe [TYPE_N] → original replacement)
+  ├─ ResponseDeobfuscator  (restores reversible placeholders only)
   │
-  └─← Client receives clean response
+  └─ Client receives clean response
 ```
 
-### Session Map (In-Process Memory)
+### What Gets Obfuscated
 
-```
-{
-  "session-id-123": {
-    "[IP_ADDRESS_0]": "10.1.2.3",
-    "[EMAIL_ADDRESS_1]": "dev@corp.internal",
-    "[DOMAIN_2]": "db.corp.internal"
-  }
-}
-```
-
-- Placeholders use entity type names for readability (`[IP_ADDRESS_0]`, not `[ENTITY_0]`)
-- Scoped to process lifetime (no disk persistence by design — sensitive data stays volatile)
-- Per-session asyncio.Lock for concurrent safety
-- Idempotent: same entity → same placeholder within session
-- Cleared via `DELETE /session/{id}` or process restart
+| Role | Obfuscated? |
+|---|---|
+| `user` | Yes |
+| `tool` / `tool_result` | Yes |
+| `assistant` | No — LLM output |
+| `system` | No — client instructions |
 
 ## Logging
 
-Control verbosity with `OBFUSPROXY_LOG_LEVEL` (default: `INFO`). Three tiers:
-
-| Level | Shows |
-|---|---|
-| `INFO` | Entity count per request |
-| `DEBUG` | Obfuscation mapping table — entity type, original value, placeholder, message role/index. Clean output focused on what was redacted to what. |
-| `TRACE` | Everything in `DEBUG` plus the full obfuscated prompt sent upstream and the raw response received before de-obfuscation. |
-
 ```bash
-# Default (counts only)
+# Counts only (default)
 uvicorn app.main:app --host 127.0.0.1 --port 8080 --workers 1
 
-# Mapping table only
+# Show what was redacted to what
 OBFUSPROXY_LOG_LEVEL=DEBUG uvicorn app.main:app --host 127.0.0.1 --port 8080 --workers 1
 
-# Mapping table + full payloads
+# Full payloads
 OBFUSPROXY_LOG_LEVEL=TRACE uvicorn app.main:app --host 127.0.0.1 --port 8080 --workers 1
 ```
 
 ## Testing
 
 ```bash
-# All tests (100 tests)
-pytest
-
-# Individual modules
-pytest tests/test_regex.py        -v  # RegexDetector — all entity types, safe ranges, whitelist
-pytest tests/test_session.py      -v  # SessionMap — idempotency, counters, concurrency
-pytest tests/test_engine.py       -v  # PrivacyEngine — round-trip, role filtering
-pytest tests/test_deobfuscator.py -v  # Streaming de-obfuscation, split-placeholder buffering
-pytest tests/test_composite.py    -v  # CompositeDetector — merging, overlap priority
-pytest tests/test_config.py       -v  # Config loading and Pydantic validation
-
-# With coverage
+pytest                          # 130 tests
 pytest --cov=app --cov-report=term-missing
 ```
 
-## Key Constraints
+## Secret Scanning (Pre-commit)
 
-- **Single worker only** — `--workers 1` required (session map is in-process memory)
+A [detect-secrets](https://github.com/Yelp/detect-secrets) pre-commit hook prevents accidental credential commits. Install once after cloning:
+
+```bash
+uv pip install pre-commit
+pre-commit install
+```
+
+To update the baseline after adding doc examples or other known-safe strings:
+
+```bash
+detect-secrets scan --baseline .secrets.baseline
+git add .secrets.baseline
+```
+
+## Constraints
+
+- **`--workers 1` required** — session map is in-process memory
 - **No session TTL** — restart to clear sensitive data
+- **No proxy authentication** — localhost-only by design
 - **IPv6 not detected** — only loopback `::1` in safe list
-- **No authentication** — operates on localhost only
-- **Volatile storage** — session map is memory-only by design
-- **Placeholder collision edge case** — if user types `[IP_ADDRESS_0]` literally, it will be back-substituted
 
 ## Project Structure
 
 ```
-ObfusProxy/
-├── .venv/                  # Virtual environment (uv)
-├── app/
-│   ├── main.py            # FastAPI app + routes
-│   ├── config.py          # Pydantic config schema
-│   ├── log.py             # TRACE log level definition
-│   ├── pipeline.py        # Obfuscate → route → deobfuscate
-│   ├── router.py          # LiteLLM wrapper
-│   ├── deobfuscator.py    # Streaming de-obfuscation
-│   └── privacy/
-│       ├── engine.py      # PrivacyEngine
-│       ├── session.py     # SessionMap
-│       ├── factory.py     # Detector factory (single or composite)
-│       └── backends/
-│           ├── base.py        # Detector ABC + Entity + resolve_overlaps()
-│           ├── regex.py       # RegexDetector — structured PII
-│           ├── composite.py   # CompositeDetector — wraps N backends
-│           └── presidio.py    # PresidioDetector — NER (optional)
-├── tests/
-│   ├── conftest.py            # Shared fixtures
-│   ├── test_regex.py          # RegexDetector (24 tests)
-│   ├── test_session.py        # SessionMap (17 tests)
-│   ├── test_engine.py         # PrivacyEngine (15 tests)
-│   ├── test_deobfuscator.py   # Streaming de-obfuscation (13 tests)
-│   ├── test_composite.py      # CompositeDetector (8 tests)
-│   └── test_config.py         # Config loading and validation (11 tests)
-├── config.yaml            # Configuration
-├── pyproject.toml         # Dependencies
-├── CLAUDE.md              # Claude Code guide (setup, testing, troubleshooting)
-└── README.md              # This file
+app/
+├── main.py            # FastAPI app + routes
+├── pipeline.py        # obfuscate → route → deobfuscate
+├── router.py          # LiteLLM wrapper
+├── deobfuscator.py    # streaming-safe placeholder restoration
+└── privacy/
+    ├── engine.py      # PrivacyEngine
+    ├── session.py     # SessionMap (asyncio-safe, in-memory)
+    ├── factory.py     # config → Detector (or CompositeDetector)
+    └── backends/
+        ├── base.py             # Detector ABC, Entity, resolve_overlaps()
+        ├── regex.py            # context-bearing PII (email, IP, domain…)
+        ├── secrets_backend.py  # detect-secrets wrapper, redact-only
+        ├── composite.py        # merges N backends, resolves overlaps
+        └── presidio.py         # NER via spaCy (optional)
 ```
-
-## Future Stages
-
-- **Stage 3:** Redis session store, multi-worker support, session TTL + eviction, Prometheus metrics
-- **Stage 4+:** BERT NER backend, IPv6 CIDR detection, keyring integration, hot-config reload, audit logging
-
-## Development
-
-### Adding a New Entity Pattern
-
-Edit `app/privacy/backends/regex.py` — add to `_PATTERNS` list. Add a test case to `tests/test_regex.py`. No other files change.
-
-### Adding a New Backend
-
-1. Create `app/privacy/backends/newbackend.py` implementing the `Detector` ABC
-2. Add one `elif` block in `app/privacy/factory.py`
-3. Optionally add to `[project.optional-dependencies]` in `pyproject.toml`
 
 ## License
 
