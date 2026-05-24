@@ -323,7 +323,7 @@ Two obfuscation modes exist:
 | `PORT` | regex | reversible | `:8080` |
 | `AWS_KEY` | detect_secrets | redact | `AKIA...`, `ASIA...` |
 | `AZURE_KEY` | detect_secrets | redact | Azure storage keys |
-| `BASIC_AUTH` | detect_secrets | redact | password in `https://user:pass@host` URLs |
+| `BASIC_AUTH` | detect_secrets | redact | password extracted from HTTP basic-auth URLs |
 | `DISCORD_TOKEN` | detect_secrets | redact | Discord bot tokens |
 | `GITHUB_TOKEN` | detect_secrets | redact | `ghp_...`, `gho_...`, `ghu_...` |
 | `GITLAB_TOKEN` | detect_secrets | redact | `glpat-...` |

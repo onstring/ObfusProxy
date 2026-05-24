@@ -24,7 +24,6 @@ source .venv/bin/activate
 ### 2. Set API Key and Run the Proxy
 
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-...
 uvicorn app.main:app --host 127.0.0.1 --port 8080 --workers 1
 ```
 
@@ -32,7 +31,6 @@ uvicorn app.main:app --host 127.0.0.1 --port 8080 --workers 1
 
 ```bash
 export ANTHROPIC_BASE_URL=http://localhost:8080
-export ANTHROPIC_API_KEY=sk-ant-proxy-dummy-key
 claude
 ```
 
